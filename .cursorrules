@@ -1,0 +1,43 @@
+# Kindle 改装向导
+
+这个仓库是 `kindle-weread-skill`。用户要给自己的 Kindle 安装 KOReader 或微信读书插件时，先阅读 `SKILL.md`，并严格按其中的状态机执行。
+
+## 必须遵守
+
+- 每次只让用户做一件事。说完 JSON 里的 `message` 就停，不要预告后面的阶段。
+- 写入 Kindle 只通过 `python scripts/kindle_helper.py <子命令> --json`。
+- 新对话先同时跑 `detect` 和 `scan-wifi`。没有 KOReader 时才要求 USB 和飞行模式；已经开着 KOReader SSH 时走无线安装，不要再让用户插线。固件 `>= 5.18.1` 的首次越狱改为先下载锁屏广告，因为要走 AdBreak。
+- 固件 `< 5.16.3`（含基准机 Paperwhite 第 7 代 KP3，`G090`，`5.16.2.1.1`）使用 `kindlepw2` 和 coplate KUAL。
+- 固件 `>= 5.16.3` 使用 `kindlehf` 和 hardfloat KUAL。
+- 不要把 LanguageBreak 当作默认方案。它会清空设备。
+- 脚本拒绝写入系统盘。不要改安全检查来“让命令先跑起来”。
+
+## Lessons
+
+- 软浮点 MRPI 是 `kual-mrinstaller-1.7.N-r19303.zip`，KUAL booklet 是 `KUAL-f190a38` 里的 `Update_KUALBooklet_*_install.bin`。`kual-mrinstaller-khf` 只用于固件 `>= 5.16.3`。
+- 硬浮点启动器安装包是 `Update_KOLBooklet_V1.4.2_install.bin`，仍然用 `;log mrpi` 安装。`;log mrpi` 没反应时才改用 PEKI。
+- WinterBreak 当前包的根目录包含 `.active_content_sandbox`。通用 Hotfix 来自 `KindleModding/Hotfix` 的 `Update_hotfix_universal.bin`，要在越狱重启之后再写入。
+- LanguageBreak 只复制压缩包里 `LanguageBreak/` 目录的内容。各语言 hotfix 不要一起丢进根目录；中文完成包是 `Update_hotfix_languagebreak-zh-Hans-CN.bin`。
+- AdBreak v1.2 只有 `adbreak.html`、`jb.sh` 和 `replace.bat`。它修改的是 `system/.assets` 里的 `details.html`，不是 Kindle 根目录。
+- 插件目录必须正好叫 `weread.koplugin` 或 `miuread.koplugin`，并且直接位于 `koreader/plugins/`。
+- 在 PowerShell 里内联复杂 Python 会被引号吃掉。需要临时脚本时写成文件再运行。
+- `Path("E:")` 在 Windows 上不是盘根。盘根要写成 `E:\`。
+- argparse 的公共参数要挂在每个子命令上。`detect --json` 才是文档里的写法；写在子命令前面不会被识别。
+- KOReader SSH 写在 `koreader/settings.reader.lua`：`SSH_port` 为 `"2222"`，`SSH_allow_no_password` 和 `SSH_autostart` 为 true，`SSH_key_only_auth` 必须为 false，否则无密码登录不会生效。
+- 无线插件目录是 `/mnt/us/koreader/plugins/weread.koplugin` 或 `miuread.koplugin`。只连接局域网私有 IPv4。网段大于 /24 时只扫本机所在的 /24，端口固定为 2222。
+- 中文 Windows 的 `ipconfig` 是 GBK/OEM 编码。按 UTF-8 硬解会丢掉「子网掩码」，扫描会退到错误网段。WSL 的 `vEthernet` 不要扫，Kindle 在家里的 Wi-Fi 网段上。
+- 枚举盘符前要关掉 Windows 的“请插入磁盘”对话框，并跳过 A:、B: 和光驱。Kindle 只认带 `system` 与 `documents` 的可移动盘或第二块固定盘。
+- WinterBreak2 v1.1.0 的 `wb2.zip` 只有 `winterbreak2/dialoger.html`。成功标志是 `documents/JAILBROKEN.txt`（jb.sh v2.2.1，正文是 Winterbreak2 Jailbreak）以及 `libkh/bin/fbink`。这时 `detect` 的 `jailbroken` 仍是 false，因为还没有 `mkk`。jb.sh v2.2.1 已经拦住 OTA，官方说明可以跳过 Hotfix；「更新您的 Kindle」发灰是正常的。若根目录已有 `Update_hotfix_universal.bin`，用 `clean-ota --include-hotfix` 删掉，然后直接 `install-kual`。只有越狱屏幕明确写了要安装 hotfix 时才写 Hotfix。
+- coplate KUAL 用 `;log mrpi` 装完后，书库里的启动器是 0 字节的 `documents/KUAL.kual`，不是 `KUAL.azw2`。`kual_present` 要认 `.kual`。安装日志在 `extensions/MRInstaller/log/mrinstaller.log`，成功行是 `Success! :)`。日志里 fbink 查设备号出现 Segmentation fault 时，只要后面有 Success 并且 `KUAL.kual` 已生成，就可以继续装 KOReader。
+- 已装的 `weread.koplugin` v1.6.0 有书架、下载阅读、搜索和书评（书籍详情里的「推荐 / 最新」），没有手机版那种可浏览的书城和发现页。要更接近手机的书城（为你推荐、排行榜、分类、相似推荐），用觅阅 `miuread.koplugin` 6.0.0。两个插件可以并存。觅阅仍然没有手机「发现」里的社交动态。
+
+## Scratchpad
+
+任务：给 kindle-weread-skill 增加局域网 Wi-Fi 部署，减少插拔 USB。
+
+[X] 阶段 1 分成状态 A（必须 USB）和状态 B（KOReader SSH，走 2222）
+[X] USB 安装 KOReader 时预置 `SSH_port`、`SSH_autostart`、`SSH_allow_no_password`
+[X] 新增 `scan-wifi` 与 `wifi-install-plugin`，优先用系统 scp/ssh，没有则用 paramiko
+[X] 基准路由不变：KP3 / G090 / 5.16.2.1.1 → legacy_softfloat / kindlepw2 / coplate / winterbreak
+
+下一步：觅阅 v6.0.0 已装到 D:\koreader\plugins\miuread.koplugin，weread.koplugin 仍保留。finalize 已同步。等用户从 KUAL 重新打开 KOReader，在顶部工具栏打开觅阅并扫码。书架管理可能要第二次授权。
