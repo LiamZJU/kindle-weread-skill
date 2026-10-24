@@ -1,6 +1,8 @@
 # kindle-weread-skill
 
-用 Cursor 或 Claude Code 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)、社区微信读书插件，以及默认的乔木 SimpleUI 主页。界面不满意，就让助手改这份插件再写回 Kindle。
+把这句话发给你的 Agent：「安装这个 Skill https://github.com/LiamZJU/kindle-weread-skill ，让他来帮你给 Kindle 装上 KOReader、微信读书插件和乔木 SimpleUI。」
+
+用 Claude Code、Codex 或 Cursor 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)、社区微信读书插件，以及默认的乔木 SimpleUI 主页。界面不满意，就让助手改这份插件再写回 Kindle。
 
 脚本负责查找 Kindle 磁盘、下载公开的社区安装包、校验并写入。需要在 Kindle 屏幕上点按的步骤会一次只提示一个。它不会在没有你确认的情况下假装越狱已经成功。
 
