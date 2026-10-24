@@ -27,7 +27,7 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
 
 ## 必须遵守
 
-- Kindle 还没连上时，只让用户做一件事。Kindle 一旦连上，同一轮里把电脑能完成的安装全部跑完，不要逐阶段汇报，也不要询问装哪一个插件。
+- Kindle 还没连上时，只让用户做一件事。Kindle 一旦连上，同一轮里把电脑能完成的安装全部跑完，不要逐阶段汇报，也不要询问装哪一个插件。越狱确认是 `install-jailbreak` 之前唯一要停下来的事；用户明确同意之后，后面的电脑步骤仍在同一轮做完。
 - 只有脚本返回的步骤必须在 Kindle 屏幕上完成时才停下来。把那一条 `message` 交给用户，等对方做完并重新连上，再把剩下的命令一次跑完。
 - 安装结束后只说最后一条成功命令的 `message`。那就是怎么打开新界面。不要再讲「设置 → 主页 → 以主页启动」，也不要叫用户自己找工具栏扫码。
 - 默认安装 `weread`。只有用户明确要觅阅时才用 `miuread` 或 `both`。
@@ -40,7 +40,13 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
   - 固件 `>= 5.16.3`：`kindlehf`，KOReader 用 `kindlehf`，KUAL 用 `hardfloat`。
 - 基准机是 Kindle Paperwhite 第 7 代（KP3，序列号前缀 `G090`），固件 `5.16.2.1.1`。它走 `kindlepw2` 和 `coplate`。
 - 国内或 GitHub 不稳定时，在命令后加 `--mirror https://ghfast.top/`。镜像只重试文件下载；失败时把脚本的 `error` 原样告诉用户。
-- 越狱可能变砖，并会影响保修。开始前用一句话说明。LanguageBreak 还会清空设备，只有用户明确要求才使用。
+- 运行 `install-jailbreak` 之前必须先停下来，把下面这段原样发给用户，等对方回复「同意」。没有这句同意，不要运行命令，也不要自己加上 `--i-accept-jailbreak-risk`。LanguageBreak 还会清空设备，只有用户明确要求才使用。
+
+```text
+越狱会让这台 Kindle 失去亚马逊保修。失败时可能变砖：开不了机，或者卡在更新失败。
+恢复方法：先把 documents 文件夹复制到电脑；设备还能开机时，按 https://kindlemodding.org/jailbreaking/unjailbreaking.html 退出越狱并装回官方固件；若卡在 Update Failed，按 https://kindlemodding.org/jailbreaking/recovering-from-a-reset.html 把对应机型的官方固件 .bin 放到 Kindle 根目录后重启；AdBreak 改过的广告文件可以用 restore-assets 还原；电脑完全认不出磁盘时，这个工具修不好。
+请回复「同意」才继续。
+```
 - 乔木 SimpleUI 是默认主页。`install-plugin` 和 `wifi-install-plugin` 会一并装上，不要先问用户要不要。设备上已经有 `simpleui.koplugin` 时不要覆盖。只有用户明确说不要这个主页时才加 `--no-simpleui`。
 - 安装会把 KOReader 的 `start_with` 写成 `homescreen_simpleui`，并在还没有 `settings/simpleui` 时跳过布局向导。已经有的个人设置不要覆盖。无线安装时不要改正在运行的 `settings.reader.lua`；下一次打开由 `wekindle.koplugin` 写入。
 
@@ -75,7 +81,7 @@ USB 连上后先运行 `detect` 和 `clean-ota`，再按设备现状往下走。
 
 状态 B 没有插上 USB 时，不要运行 `clean-ota`。KOReader 已经在，并且扫到了 2222，就从第 5 步的无线命令开始，然后 `finalize`。
 
-1. 还没越狱：运行 `install-jailbreak`，把 `message` 交给用户，停。这是屏幕上的步骤。
+1. 还没越狱：用户已经对上面的确认回复「同意」之后，运行 `install-jailbreak --i-accept-jailbreak-risk`，把 `message` 交给用户，停。这是屏幕上的步骤。还没同意就停在确认，不要先跑命令。
 2. 对方回复「已重启」并重新连上后，再按阶段 2 判断要不要 Hotfix。需要的话运行 `install-hotfix` 并停。不需要就继续。
 3. 还没有 KUAL：运行 `install-kual`。`already_present` 就继续；否则把 `message` 交给用户，停，等 `;log mrpi` 做完并重新连上。
 4. 还没有 KOReader：按架构运行 `install-koreader`。成功后不要把这条 `message` 念给用户，直接装插件。
@@ -93,10 +99,10 @@ USB 连上后先运行 `detect` 和 `clean-ota`，再按设备现状往下走。
 - LanguageBreak 只适用于 `<= 5.16.2.1.1`，而且会清空内容。用户点名时才加 `--method languagebreak --i-understand-this-wipes-the-kindle`。
 - 用户要求不登录亚马逊商店、且固件低于 `5.16.4` 时，才改用 `--method winterbreak2`。
 
-运行：
+用户对确认回复「同意」之后才运行。缺少 `--i-accept-jailbreak-risk` 时脚本会拒绝，不会下载，也不会写入。
 
 ```bash
-python scripts/kindle_helper.py install-jailbreak --json
+python scripts/kindle_helper.py install-jailbreak --i-accept-jailbreak-risk --json
 ```
 
 WinterBreak、WinterBreak2、AdBreak 可以把返回的 `message` 整段发给用户，因为这些步骤要离开电脑连续做完。LanguageBreak 每次只说 `user_steps` 的当前一步；用户回复「可以写入」或「第二次写入」时，再运行一次同一个命令。
@@ -211,7 +217,7 @@ python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source 
 | --- | --- |
 | `detect` | 找盘、剩余空间、固件、序列号前缀、越狱标记 |
 | `clean-ota` | 删除根目录的 `update.bin.tmp.partial` 等升级残留 |
-| `install-jailbreak` | 下载并写入越狱包，Hotfix 先放进缓存 |
+| `install-jailbreak` | 用户确认保修、变砖和恢复方法后，下载并写入越狱包，Hotfix 先放进缓存 |
 | `install-hotfix` | 把一个 Hotfix `.bin` 写到根目录 |
 | `install-kual` | 写入 MRPI，并把对应 KUAL 的 install `.bin` 放进 `mrpackages` |
 | `install-koreader --arch` | 下载清单里对应架构的 KOReader 并合并到根目录 |

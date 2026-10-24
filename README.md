@@ -16,7 +16,9 @@
 
 ## 开始前
 
-越狱可能变砖，也会影响保修。请只对自己拥有的 Kindle 操作，并先备份需要留下的文件。微信读书插件是非官方客户端，登录的是你自己的账号；请遵守微信读书的使用条款，账号风险由使用者承担。
+越狱会让这台 Kindle 失去亚马逊保修。失败时可能变砖：开不了机，或者卡在更新失败。请只对自己拥有的 Kindle 操作，并先把 `documents` 文件夹复制到电脑。设备还能开机时，可以按 [KindleModding 的退出越狱说明](https://kindlemodding.org/jailbreaking/unjailbreaking.html) 装回官方固件。若卡在 Update Failed，按 [恢复说明](https://kindlemodding.org/jailbreaking/recovering-from-a-reset.html) 把对应机型的官方固件 `.bin` 放到 Kindle 根目录后重启。电脑完全认不出磁盘时，这个工具修不好。
+
+`install-jailbreak` 在加上 `--i-accept-jailbreak-risk` 之前不会下载或写入。只有在读过上面的保修、变砖和恢复说明并决定继续时才加这个参数。微信读书插件是非官方客户端，登录的是你自己的账号；请遵守微信读书的使用条款，账号风险由使用者承担。
 
 开始时打开飞行模式，避免 Kindle 在改装过程中静默下载固件。固件 `5.18.1` 及以上要走 AdBreak，需要先联网下载锁屏广告，这种机器先不要开飞行模式。
 
@@ -58,7 +60,7 @@ git clone <本仓库地址> ~/.claude/skills/kindle-weread-skill
 python scripts/kindle_helper.py self-check
 python scripts/kindle_helper.py detect --json
 python scripts/kindle_helper.py clean-ota --json
-python scripts/kindle_helper.py install-jailbreak --json
+python scripts/kindle_helper.py install-jailbreak --i-accept-jailbreak-risk --json
 python scripts/kindle_helper.py install-hotfix --json
 python scripts/kindle_helper.py install-kual --json
 python scripts/kindle_helper.py install-koreader --arch kindlepw2 --json

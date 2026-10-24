@@ -47,6 +47,7 @@ REMOTE_PLUGIN_PARENT = "/mnt/us/koreader/plugins"
 CGNAT = ipaddress.ip_network("100.64.0.0/10")
 # Shown after a wireless step. Install never writes SSH_autostart = true.
 SSH_OFF_NOTE = "用完后请回到顶部菜单 → 网络 → SSH 服务器，取消勾选 SSH 服务器。"
+JAILBREAK_ACK_FLAG = "--i-accept-jailbreak-risk"
 
 # Every file written to the Kindle is pinned in scripts/pins.json.
 PIN_KEYS = (
@@ -152,6 +153,22 @@ def route_firmware(firmware: str) -> dict[str, str]:
         "koreader_arch": "kindlehf",
         "kual_variant": "hardfloat",
     }
+
+
+def require_jailbreak_acknowledgement(accepted: bool) -> None:
+    """Block install-jailbreak until the operator accepts warranty loss, brick risk, and recovery."""
+    if accepted:
+        return
+    raise SafetyError(
+        "越狱会让这台 Kindle 失去亚马逊保修。失败时可能变砖：开不了机，或者卡在更新失败。"
+        "恢复方法：先把 documents 文件夹复制到电脑；设备还能开机时，按 "
+        "https://kindlemodding.org/jailbreaking/unjailbreaking.html 退出越狱并装回官方固件；"
+        "若卡在 Update Failed，按 https://kindlemodding.org/jailbreaking/recovering-from-a-reset.html "
+        "把对应机型的官方固件 .bin 放到 Kindle 根目录后重启；"
+        "AdBreak 改过的广告文件可以用 restore-assets 还原；"
+        "电脑完全认不出磁盘时，这个工具修不好。"
+        f"确认这些之后，重新运行并加上 {JAILBREAK_ACK_FLAG}。"
+    )
 
 
 def recommend_method(firmware: str) -> str:
@@ -2202,6 +2219,7 @@ def cmd_clean_ota(args: argparse.Namespace) -> dict:
 
 
 def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
+    require_jailbreak_acknowledgement(args.i_accept_jailbreak_risk)
     kindle = require_kindle(args)
     firmware = require_firmware(kindle, args)
     method = args.method or recommend_method(firmware)
@@ -2770,6 +2788,14 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(b"simpleui_onboarding_done" in seeded_bytes, "onboarding skip key")
         check(not seed_simpleui_skip_onboarding(ssh_root), "do not reseed onboarding")
         check(seeded.read_bytes() == seeded_bytes, "reseed leaves settings")
+        try:
+            require_jailbreak_acknowledgement(False)
+            check(False, "jailbreak ack required")
+        except SafetyError as exc:
+            ack_text = str(exc)
+            check("保修" in ack_text and "变砖" in ack_text and "官方固件" in ack_text, "jailbreak ack names risk and recovery")
+            check(JAILBREAK_ACK_FLAG in ack_text, "jailbreak ack names the flag")
+        require_jailbreak_acknowledgement(True)
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
             'return {\n    ["font"] = "Droid",\n    ["SSH_autostart"] = true,\n    ["SSH_port"] = "2222",\n}\n',
             encoding="utf-8",
@@ -3012,6 +3038,11 @@ def build_parser() -> argparse.ArgumentParser:
     jailbreak.add_argument("--locale", default="zh-Hans-CN", help="LanguageBreak 完成包的语言")
     jailbreak.add_argument("--force", action="store_true")
     jailbreak.add_argument("--i-understand-this-wipes-the-kindle", action="store_true")
+    jailbreak.add_argument(
+        "--i-accept-jailbreak-risk",
+        action="store_true",
+        help="确认已知晓保修失效、变砖风险和恢复方法",
+    )
 
     subparsers.add_parser("install-hotfix", parents=[common], help="把 Hotfix 写到 Kindle 根目录")
 
