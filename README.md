@@ -1,6 +1,6 @@
 # kindle-weread-skill
 
-用 Cursor 或 Claude Code 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)，以及社区微信读书插件。
+用 Cursor 或 Claude Code 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)、社区微信读书插件，以及默认的乔木 SimpleUI 主页。界面不满意，就让助手改这份插件再写回 Kindle。
 
 脚本负责查找 Kindle 磁盘、下载公开的社区安装包、校验并写入。需要在 Kindle 屏幕上点按的步骤会一次只提示一个。它不会在没有你确认的情况下假装越狱已经成功。
 
@@ -20,7 +20,7 @@
 
 ## 在 Cursor 里使用
 
-用 Cursor 打开本仓库。根目录的 `.cursorrules` 会让助手进入改装向导，并按 `SKILL.md` 的五个阶段推进。直接说：
+用 Cursor 打开本仓库。根目录的 `.cursorrules` 会让助手进入改装向导，并按 `SKILL.md` 推进。直接说：
 
 > 帮我把 Kindle 装上 KOReader 和微信读书。
 
@@ -58,6 +58,8 @@ python scripts/kindle_helper.py install-plugin --choice weread --json
 python scripts/kindle_helper.py finalize --json
 ```
 
+`install-plugin` 和 `wifi-install-plugin` 会在微信读书插件之后默认装上乔木 SimpleUI。设备上已经有 SimpleUI 时不会覆盖。只有明确不要这个主页时才加 `--no-simpleui`。
+
 `--json` 把结果写到 stdout，进度写到 stderr。没有接上 Kindle 时，除 `self-check` 以外的命令会停下来，不会写入电脑上的其他磁盘。
 
 ### 固件和安装包
@@ -75,6 +77,15 @@ python scripts/kindle_helper.py finalize --json
 - `miuread`：[miumiupy98-art/miuread-koreader](https://github.com/miumiupy98-art/miuread-koreader)，功能更多，支持排版美化。书架管理是另一次授权。
 
 安装位置固定为 `koreader/plugins/weread.koplugin/` 或 `koreader/plugins/miuread.koplugin/`。
+
+默认主页是 [乔木 SimpleUI](https://github.com/joeseesun/qiaomu-simpleui)。它基于 SimpleUI 3.0.0（GPL-3.0）：隐藏顶部下拉箭头、在底栏放微信读书入口、长按隐藏书籍并可恢复。上面的 `install-plugin` 会一起装上它。脚本只下载 Release 里的 `simpleui.koplugin.zip`，不使用 GitHub Source code ZIP，也不把这份 GPL 插件放进本仓库。需要 KOReader 2026.03 或更新，以及已启用的 CoverBrowser。
+
+已经有 SimpleUI 时，安装微信读书插件不会覆盖它。要重装或改界面时，改电脑上的副本，再用单独的命令写回去。重装会先备份旧目录，并留下 `koreader/settings/simpleui` 里的布局和隐藏记录。
+
+```bash
+python scripts/kindle_helper.py install-simpleui --source simpleui.koplugin --json
+python scripts/kindle_helper.py wifi-install-simpleui --ip 192.168.1.20 --source simpleui.koplugin --json
+```
 
 ### 常用参数
 
@@ -100,4 +111,4 @@ python scripts/kindle_helper.py restore-assets --json
 
 ## 许可
 
-本仓库的脚本和文档以 MIT 许可证发布。KOReader、越狱包和插件各自使用上游许可证；本工具只在运行时从它们的公开 Release 下载。
+本仓库的脚本和文档以 MIT 许可证发布。KOReader、越狱包和插件各自使用上游许可证；本工具只在运行时从它们的公开 Release 下载。乔木 SimpleUI 是 GPL-3.0，同样只在安装时下载，不包含在本仓库里。

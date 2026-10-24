@@ -97,6 +97,11 @@ PLUGIN_DIRS = {
     "weread": "weread.koplugin",
     "miuread": "miuread.koplugin",
 }
+SIMPLEUI_REPO = "joeseesun/qiaomu-simpleui"
+SIMPLEUI_DIR = "simpleui.koplugin"
+SIMPLEUI_ASSET = "simpleui.koplugin.zip"
+SIMPLEUI_MIN_KOREADER = "2026.03"
+REMOTE_SUI_SETTINGS = "/mnt/us/koreader/settings/simpleui/sui_settings.lua"
 
 GITHUB_REPOS = {
     "winterbreak": "KindleModding/WinterBreak",
@@ -107,6 +112,7 @@ GITHUB_REPOS = {
     "koreader": "koreader/koreader",
     "weread": "finlater/weread.koplugin",
     "miuread": "miumiupy98-art/miuread-koreader",
+    "simpleui": SIMPLEUI_REPO,
 }
 
 
@@ -273,6 +279,64 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def github_releases(repo: str, mirror: str | None) -> list[dict]:
+    """Return recent releases, including prereleases.
+
+    /releases/latest hides prereleases. Qiaomu SimpleUI currently publishes only
+    prerelease tags, so that endpoint is empty for this repository.
+    """
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
+    raw = request_bytes(
+        url,
+        timeout=30,
+        mirror=mirror,
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise NetworkError(f"GitHub API 返回的不是 JSON: {repo}") from exc
+    if isinstance(payload, dict):
+        message = payload.get("message", "未知错误")
+        raise NetworkError(f"读取 {repo} 的 Release 列表失败: {message}")
+    if not isinstance(payload, list):
+        raise NetworkError(f"读取 {repo} 的 Release 列表失败。")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def select_release(releases: Sequence[dict], predicate: Callable[[str], bool]) -> tuple[dict, dict]:
+    for release in releases:
+        if release.get("draft"):
+            continue
+        for asset in release.get("assets", []):
+            if predicate(str(asset.get("name", ""))):
+                return release, asset
+    raise NetworkError(
+        "没有找到 simpleui.koplugin.zip。GitHub 页面上的 Source code ZIP 不能当安装包。"
+    )
+
+
+def is_simpleui_asset(name: str) -> bool:
+    return name == SIMPLEUI_ASSET
+
+
+def checksum_from_sums(text: str, filename: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        name = parts[-1].lstrip("*")
+        if name != filename and not name.endswith("/" + filename):
+            continue
+        digest = parts[0]
+        if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            return digest.lower()
+    return None
 
 
 def github_latest(repo: str, mirror: str | None) -> dict:
@@ -1018,6 +1082,239 @@ def remember_plugins(cache: Path, choices: Sequence[str]) -> list[str]:
     return merged
 
 
+def koreader_short_version(text: str) -> str | None:
+    match = re.search(r"v(\d{4}\.\d{2}(?:\.\d{1,2})?)", text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def read_koreader_version(kindle: Path) -> str | None:
+    path = kindle / "koreader" / "git-rev"
+    if not path.is_file():
+        return None
+    return koreader_short_version(path.read_text(encoding="utf-8", errors="replace")[:200])
+
+
+def coverbrowser_disabled(settings_text: str) -> bool:
+    return bool(re.search(r'\["coverbrowser\.koplugin"\]\s*=\s*true', settings_text))
+
+
+def sui_settings_path(kindle: Path) -> Path:
+    return kindle / "koreader" / "settings" / "simpleui" / "sui_settings.lua"
+
+
+def read_optional_bytes(path: Path) -> bytes | None:
+    if not path.is_file():
+        return None
+    return path.read_bytes()
+
+
+def restore_sui_settings(kindle: Path, payload: bytes | None) -> None:
+    path = sui_settings_path(kindle)
+    if payload is None:
+        if path.is_file():
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+
+def require_simpleui_device(kindle: Path) -> str:
+    if not (kindle / "koreader" / "plugins").is_dir():
+        raise SafetyError("还没有安装 KOReader，不能装 SimpleUI。")
+    version = read_koreader_version(kindle)
+    if version is None:
+        raise SafetyError("读不到 KOReader 版本（koreader/git-rev）。乔木 SimpleUI 需要 2026.03 或更新。")
+    if version_lt(version, SIMPLEUI_MIN_KOREADER):
+        raise SafetyError(f"这台 KOReader 是 {version}。乔木 SimpleUI 需要 {SIMPLEUI_MIN_KOREADER} 或更新。")
+    cover = kindle / "koreader" / "plugins" / "coverbrowser.koplugin"
+    if not cover.is_dir() or (cover / "disable").exists():
+        raise SafetyError("没有可用的 CoverBrowser。乔木 SimpleUI 需要 KOReader 自带并启用的 CoverBrowser。")
+    settings = kindle / "koreader" / "settings.reader.lua"
+    if settings.is_file() and coverbrowser_disabled(settings.read_text(encoding="utf-8", errors="replace")):
+        raise SafetyError("CoverBrowser 在 KOReader 设置里被关掉了。请先启用它，再装 SimpleUI。")
+    return version
+
+
+def assert_not_kindle_tree(source: Path) -> None:
+    for parent in [source, *source.parents]:
+        if (parent / "system").is_dir() and (parent / "documents").is_dir() and (parent / "koreader").is_dir():
+            raise SafetyError("不要直接改 Kindle 上的插件。请把 simpleui.koplugin 复制到电脑上再改，然后用 --source 写回去。")
+        if parent == parent.parent:
+            break
+
+
+def resolve_simpleui_source(raw: str) -> Path:
+    path = Path(raw)
+    if not path.exists():
+        raise SafetyError(f"找不到 --source：{raw}")
+    path = path.resolve()
+    assert_not_kindle_tree(path)
+    if path.name == SIMPLEUI_DIR and (path / "main.lua").is_file():
+        source = path
+    elif (path / SIMPLEUI_DIR / "main.lua").is_file():
+        source = path / SIMPLEUI_DIR
+    else:
+        raise SafetyError("请指向 simpleui.koplugin 目录，或指向直接包含它的目录。")
+    if not (source / "_meta.lua").is_file():
+        raise SafetyError("simpleui.koplugin 里没有 _meta.lua。请使用 Release 里的 simpleui.koplugin，或它的本地副本。")
+    if (source / SIMPLEUI_DIR).is_dir():
+        raise SafetyError("插件套了两层 simpleui.koplugin，已停止。")
+    return source
+
+
+def simpleui_version_label(source: Path, release: str | None) -> str:
+    if release:
+        return release
+    meta = (source / "_meta.lua").read_text(encoding="utf-8", errors="replace")
+    match = re.search(r'version\s*=\s*"([^"]+)"', meta)
+    return match.group(1) if match else "local"
+
+
+def verify_sha256_sums(release: dict, archive: Path, cache: Path, mirror: str | None) -> None:
+    sums = next((item for item in release.get("assets", []) if item.get("name") == "SHA256SUMS"), None)
+    if not isinstance(sums, dict):
+        archive.unlink(missing_ok=True)
+        raise SafetyError("这个 Release 没有 SHA256SUMS，已停止。")
+    sums_path = cache / "downloads" / f"{archive.name}.SHA256SUMS"
+    download_file(str(sums["browser_download_url"]), sums_path, mirror)
+    expected = checksum_from_sums(sums_path.read_text(encoding="utf-8", errors="replace"), archive.name)
+    if expected is None:
+        archive.unlink(missing_ok=True)
+        raise SafetyError(f"SHA256SUMS 里没有 {archive.name}。")
+    actual = sha256_file(archive)
+    if actual.lower() != expected:
+        archive.unlink(missing_ok=True)
+        raise SafetyError(f"{archive.name} 的 SHA-256 校验失败。")
+    log(f"SHA-256 校验通过: {archive.name}")
+
+
+def fetch_simpleui_release(cache: Path, mirror: str | None) -> tuple[str, Path]:
+    release, asset = select_release(github_releases(SIMPLEUI_REPO, mirror), is_simpleui_asset)
+    if asset.get("name") != SIMPLEUI_ASSET:
+        raise SafetyError("拒绝下载 Source code ZIP。安装包必须正好叫 simpleui.koplugin.zip。")
+    dest = cache / "downloads" / SIMPLEUI_ASSET
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    size = asset.get("size")
+    if dest.is_file() and size and dest.stat().st_size == size:
+        log(f"使用已缓存的 {dest.name}")
+    else:
+        download_file(str(asset["browser_download_url"]), dest, mirror)
+    verify_sha256_sums(release, dest, cache, mirror)
+    source = plugin_source(fresh_extract(dest, cache), SIMPLEUI_DIR)
+    if source.name != SIMPLEUI_DIR or not (source / "_meta.lua").is_file():
+        raise SafetyError("安装包里没有合格的 simpleui.koplugin。不要改用 GitHub Source code ZIP。")
+    return str(release.get("tag_name") or ""), source
+
+
+def backup_installed_plugin(kindle: Path, cache: Path, folder_name: str) -> Path | None:
+    current = kindle / "koreader" / "plugins" / folder_name
+    if not current.is_dir():
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = cache / "backups" / f"{folder_name}-{stamp}"
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(current, dest)
+    return dest
+
+
+def restore_plugin_dir(kindle: Path, folder_name: str, backup: Path | None) -> None:
+    dest = kindle / "koreader" / "plugins" / folder_name
+    if dest.exists():
+        shutil.rmtree(dest)
+    if backup is not None:
+        shutil.copytree(backup, dest)
+
+
+def simpleui_message(label: str, had_backup: bool, *, wifi: bool) -> str:
+    restart = "请在 KOReader 里完全退出并重新打开。" if wifi else "请安全弹出 Kindle，完全退出并重新打开 KOReader。"
+    previous = "原来的插件已备份。" if had_backup else ""
+    return (
+        f"乔木 SimpleUI {label} 已写入。{restart}{previous}"
+        "个人设置和隐藏记录仍在 settings/simpleui，这次没有改动。"
+        "要一打开就进入主页，到设置 → 主页 → 行为 → 以主页启动。"
+        "weread 已启用且底栏有空位时，会出现微信读书入口。"
+    )
+
+
+def simpleui_installed_on(kindle: Path) -> bool:
+    return (kindle / "koreader" / "plugins" / SIMPLEUI_DIR / "main.lua").is_file()
+
+
+def should_install_default_simpleui(already_present: bool, skipped: bool) -> bool:
+    return not skipped and not already_present
+
+
+def reading_login_note(plugins: Sequence[str]) -> str:
+    sentences: list[str] = []
+    if "weread" in plugins:
+        sentences.append(
+            "微信读书：先在手机微信读书打开「我 → 设置 → 微信读书 Skill」获取 API Key，再从顶部工具栏扫码。"
+        )
+    if "miuread" in plugins:
+        sentences.append("觅阅：从顶部工具栏打开觅阅并按提示扫码。书架管理会再要求一次授权。")
+    return "".join(sentences)
+
+
+def plugin_bundle_message(
+    names: str,
+    plugins: Sequence[str],
+    *,
+    wifi: bool,
+    simpleui: dict | None,
+    error: str,
+    already_present: bool,
+) -> str:
+    if simpleui is not None:
+        text = f"已装好 {names}。" + str(simpleui.get("message", ""))
+        if wifi:
+            text += reading_login_note(plugins)
+        return text
+    if error:
+        if wifi:
+            return wifi_done_message(plugins) + f"乔木 SimpleUI 没有装上：{error}"
+        return f"已装好 {names}。乔木 SimpleUI 没有装上：{error} 数据线先不要拔。"
+    if already_present:
+        kept = "乔木 SimpleUI 已经在设备上，这次没有覆盖。"
+        if wifi:
+            return wifi_done_message(plugins) + kept
+        return f"已装好 {names}。{kept}可以继续收尾并安全弹出。"
+    if wifi:
+        return wifi_done_message(plugins)
+    return f"已装好 {names}。可以继续收尾并安全弹出。"
+
+
+def install_simpleui_usb(kindle: Path, cache: Path, source: Path, label: str) -> dict:
+    require_simpleui_device(kindle)
+    require_space(kindle, 40)
+    settings = sui_settings_path(kindle)
+    before = read_optional_bytes(settings)
+    backup = backup_installed_plugin(kindle, cache, SIMPLEUI_DIR)
+    deploy_plugin(kindle, source, SIMPLEUI_DIR)
+    if read_optional_bytes(settings) != before:
+        restore_plugin_dir(kindle, SIMPLEUI_DIR, backup)
+        restore_sui_settings(kindle, before)
+        sync_kindle(kindle)
+        raise SafetyError("安装碰到了 settings/simpleui，已撤回插件并写回原来的设置。")
+    sync_kindle(kindle)
+    backup_text = None if backup is None else str(backup)
+    write_state(cache, simpleui_release=label, simpleui_backup=backup_text)
+    return {
+        "ok": True,
+        "command": "install-simpleui",
+        "status": "installed",
+        "release": label,
+        "path": str(kindle / "koreader" / "plugins" / SIMPLEUI_DIR),
+        "source_path": str(source),
+        "backup": backup_text,
+        "settings_preserved": True,
+        "message": simpleui_message(label, backup is not None, wifi=False),
+    }
+
+
 def _replace_lua_setting(text: str, key: str, value: str) -> tuple[str, bool]:
     literal = r'"(?:\\.|[^"\\])*"|true|false|nil|-?\d+'
     patterns = (
@@ -1288,7 +1585,8 @@ def choose_kindle(candidates: Sequence[dict[str, object]]) -> dict[str, object] 
 
 
 def remote_plugin_dir(folder_name: str) -> str:
-    if folder_name not in PLUGIN_DIRS.values() or not re.fullmatch(r"[A-Za-z0-9._-]+", folder_name):
+    allowed = set(PLUGIN_DIRS.values()) | {SIMPLEUI_DIR}
+    if folder_name not in allowed or not re.fullmatch(r"[A-Za-z0-9._-]+", folder_name):
         raise SafetyError("拒绝把未知目录传到 Kindle。")
     return f"{REMOTE_PLUGIN_PARENT}/{folder_name}"
 
@@ -1475,6 +1773,264 @@ def upload_plugin(local_dir: Path, ip: str, port: int, cache: Path) -> str:
     return "paramiko"
 
 
+def paramiko_connect(ip: str, port: int) -> object:
+    if paramiko is None:
+        raise SafetyError(
+            "电脑上没有 scp/ssh，也没有 paramiko。请启用 Windows 的 OpenSSH 客户端，或运行 pip install paramiko。"
+        )
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            ip,
+            port=port,
+            username=SSH_USER,
+            password="",
+            allow_agent=False,
+            look_for_keys=False,
+            timeout=8,
+            banner_timeout=8,
+            auth_timeout=8,
+        )
+    except Exception as exc:
+        client.close()
+        raise SafetyError(
+            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中勾选 SSH 服务器，并勾选允许无密码登录。"
+            f" 详细信息: {exc}"
+        ) from exc
+    return client
+
+
+def remote_shell(ip: str, port: int, cache: Path, command: str) -> str:
+    if openssh_available():
+        openssh_require_koreader(ip, port, cache)
+        completed = openssh_exec(ip, port, cache, command, timeout=60)
+        return completed.stdout or ""
+    client = paramiko_connect(ip, port)
+    try:
+        _stdin, stdout, stderr = client.exec_command(command)  # type: ignore[attr-defined]
+        text = stdout.read().decode("utf-8", errors="replace")
+        error = stderr.read().decode("utf-8", errors="replace")
+        code = stdout.channel.recv_exit_status()
+        if code != 0:
+            raise SafetyError(error.strip() or text.strip() or f"远程命令失败，退出码 {code}")
+        return text
+    finally:
+        client.close()
+
+
+def has_line(text: str, token: str) -> bool:
+    return any(line.strip() == token for line in text.splitlines())
+
+
+def simpleui_probe_command() -> str:
+    return " ".join((
+        "echo REV_BEGIN;",
+        "cat /mnt/us/koreader/git-rev 2>/dev/null;",
+        "echo;",
+        "echo REV_END;",
+        "if test -d /mnt/us/koreader/plugins/coverbrowser.koplugin && "
+        "test ! -e /mnt/us/koreader/plugins/coverbrowser.koplugin/disable; then echo COVER_OK; "
+        "else echo COVER_MISSING; fi;",
+        "if test -d /mnt/us/koreader/plugins/simpleui.koplugin; then echo PLUGIN_PRESENT; else echo PLUGIN_ABSENT; fi;",
+        "if test -f /mnt/us/koreader/settings/simpleui/sui_settings.lua; then echo SUI_PRESENT; else echo SUI_ABSENT; fi;",
+        "echo COVER_SETTING_BEGIN;",
+        "if test -f /mnt/us/koreader/settings.reader.lua; then "
+        "grep -F '[\"coverbrowser.koplugin\"]' /mnt/us/koreader/settings.reader.lua || true; fi;",
+        "echo COVER_SETTING_END;",
+    ))
+
+
+def parse_simpleui_probe(text: str) -> dict[str, object]:
+    start = text.find("REV_BEGIN")
+    end = text.find("REV_END")
+    if start < 0 or end < start:
+        raise SafetyError("读不到 KOReader 版本（koreader/git-rev）。乔木 SimpleUI 需要 2026.03 或更新。")
+    version = koreader_short_version(text[start:end])
+    if version is None:
+        raise SafetyError("读不到 KOReader 版本（koreader/git-rev）。乔木 SimpleUI 需要 2026.03 或更新。")
+    if version_lt(version, SIMPLEUI_MIN_KOREADER):
+        raise SafetyError(f"这台 KOReader 是 {version}。乔木 SimpleUI 需要 {SIMPLEUI_MIN_KOREADER} 或更新。")
+    head, marker, tail = text.partition("COVER_SETTING_BEGIN")
+    if not marker or "COVER_SETTING_END" not in tail:
+        raise SafetyError("Kindle 返回的检查结果不完整，已停止。")
+    if not has_line(head, "COVER_OK") or has_line(head, "COVER_MISSING"):
+        raise SafetyError("没有可用的 CoverBrowser。乔木 SimpleUI 需要 KOReader 自带并启用的 CoverBrowser。")
+    if coverbrowser_disabled(tail.split("COVER_SETTING_END", 1)[0]):
+        raise SafetyError("CoverBrowser 在 KOReader 设置里被关掉了。请先启用它，再装 SimpleUI。")
+    return {
+        "version": version,
+        "plugin_present": has_line(head, "PLUGIN_PRESENT"),
+        "settings_present": has_line(head, "SUI_PRESENT"),
+    }
+
+
+def fetch_remote_sui_settings(ip: str, port: int, cache: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    if openssh_available():
+        last_error: SafetyError | None = None
+        for options in ssh_option_sets(cache):
+            command = ["scp", "-P", str(port), *options, f"{SSH_USER}@{ip}:{REMOTE_SUI_SETTINGS}", str(dest)]
+            try:
+                run_checked(command, 60)
+                return
+            except SafetyError as exc:
+                last_error = exc
+                if "Bad configuration" not in str(exc) and "Unsupported" not in str(exc):
+                    raise
+        if last_error:
+            raise last_error
+        raise SafetyError("没有读到 settings/simpleui/sui_settings.lua。")
+    client = paramiko_connect(ip, port)
+    try:
+        sftp = client.open_sftp()  # type: ignore[attr-defined]
+        try:
+            sftp.get(REMOTE_SUI_SETTINGS, str(dest))
+        finally:
+            sftp.close()
+    finally:
+        client.close()
+
+
+def upload_remote_sui_settings(ip: str, port: int, cache: Path, source: Path) -> None:
+    if openssh_available():
+        last_error: SafetyError | None = None
+        for options in ssh_option_sets(cache):
+            command = ["scp", "-P", str(port), *options, str(source), f"{SSH_USER}@{ip}:{REMOTE_SUI_SETTINGS}"]
+            try:
+                run_checked(command, 60)
+                return
+            except SafetyError as exc:
+                last_error = exc
+                if "Bad configuration" not in str(exc) and "Unsupported" not in str(exc):
+                    raise
+        if last_error:
+            raise last_error
+        raise SafetyError("没有写回 settings/simpleui/sui_settings.lua。")
+    client = paramiko_connect(ip, port)
+    try:
+        sftp = client.open_sftp()  # type: ignore[attr-defined]
+        try:
+            sftp.put(str(source), REMOTE_SUI_SETTINGS)
+        finally:
+            sftp.close()
+    finally:
+        client.close()
+
+
+def valid_simpleui_backup(path: str) -> bool:
+    return bool(re.fullmatch(r"/mnt/us/koreader/backups/simpleui\.koplugin-\d{8}-\d{6}", path))
+
+
+def remote_backup_simpleui(ip: str, port: int, cache: Path, present: bool) -> str | None:
+    remote = remote_plugin_dir(SIMPLEUI_DIR)
+    if not present:
+        text = remote_shell(ip, port, cache, f"rm -rf {remote} && echo REMOVED_OK")
+        if not has_line(text, "REMOVED_OK"):
+            raise SafetyError("无法准备 SimpleUI 目录，已停止。")
+        return None
+    backup = f"/mnt/us/koreader/backups/{SIMPLEUI_DIR}-{time.strftime('%Y%m%d-%H%M%S')}"
+    if not valid_simpleui_backup(backup):
+        raise SafetyError("备份路径异常，已停止。")
+    command = (
+        f"mkdir -p /mnt/us/koreader/backups && cp -R {remote} {backup} && "
+        f"test -f {backup}/main.lua && rm -rf {remote} && echo BACKUP_OK"
+    )
+    text = remote_shell(ip, port, cache, command)
+    if not has_line(text, "BACKUP_OK"):
+        raise SafetyError("没有完成 SimpleUI 备份，已停止，没有替换现有插件。")
+    return backup
+
+
+def remote_rollback_simpleui(ip: str, port: int, cache: Path, backup: str | None) -> None:
+    remote = remote_plugin_dir(SIMPLEUI_DIR)
+    if backup is None:
+        remote_shell(ip, port, cache, f"rm -rf {remote} && sync")
+        return
+    if not valid_simpleui_backup(backup):
+        raise SafetyError("备份路径异常，没有自动撤回插件。")
+    text = remote_shell(
+        ip,
+        port,
+        cache,
+        f"rm -rf {remote} && cp -R {backup} {remote} && test -f {remote}/main.lua && sync && echo ROLLBACK_OK",
+    )
+    if not has_line(text, "ROLLBACK_OK"):
+        raise SafetyError("撤回 SimpleUI 失败。")
+
+
+def remote_settings_intact(ip: str, port: int, cache: Path, settings_present: bool, settings_copy: Path) -> bool:
+    text = remote_shell(
+        ip,
+        port,
+        cache,
+        "if test -f /mnt/us/koreader/settings/simpleui/sui_settings.lua; then echo SUI_PRESENT; else echo SUI_ABSENT; fi",
+    )
+    after_present = has_line(text, "SUI_PRESENT")
+    if settings_present != after_present:
+        return False
+    if not settings_present:
+        return True
+    verify = cache / "backups" / "sui_settings-after.lua"
+    fetch_remote_sui_settings(ip, port, cache, verify)
+    return verify.is_file() and settings_copy.is_file() and verify.read_bytes() == settings_copy.read_bytes()
+
+
+def install_simpleui_wifi(ip: str, port: int, cache: Path, source: Path, label: str) -> dict:
+    facts = parse_simpleui_probe(remote_shell(ip, port, cache, simpleui_probe_command()))
+    plugin_present = bool(facts["plugin_present"])
+    settings_present = bool(facts["settings_present"])
+    settings_copy = cache / "backups" / f"sui_settings-{time.strftime('%Y%m%d-%H%M%S')}.lua"
+    if settings_present:
+        fetch_remote_sui_settings(ip, port, cache, settings_copy)
+        if not settings_copy.is_file():
+            raise SafetyError("读不到 settings/simpleui/sui_settings.lua，已停止，没有替换插件。")
+    staged = stage_plugin(source, cache, SIMPLEUI_DIR)
+    backup_remote = remote_backup_simpleui(ip, port, cache, plugin_present)
+    try:
+        transport = upload_plugin(staged, ip, port, cache)
+    except SafetyError as exc:
+        try:
+            remote_rollback_simpleui(ip, port, cache, backup_remote)
+        except SafetyError as rollback_error:
+            raise SafetyError(f"SimpleUI 没有写完，撤回也失败了: {rollback_error}。原来的错误: {exc}") from exc
+        raise SafetyError(f"SimpleUI 没有写完，已尝试撤回原来的插件。settings/simpleui 没有改。详细信息: {exc}") from exc
+    try:
+        intact = remote_settings_intact(ip, port, cache, settings_present, settings_copy)
+    except SafetyError:
+        intact = False
+    if not intact:
+        remote_rollback_simpleui(ip, port, cache, backup_remote)
+        if settings_present and settings_copy.is_file():
+            upload_remote_sui_settings(ip, port, cache, settings_copy)
+        else:
+            remote_shell(ip, port, cache, f"rm -f {REMOTE_SUI_SETTINGS} && sync")
+        raise SafetyError("安装碰到了 settings/simpleui，已撤回插件并写回原来的设置。")
+    write_state(
+        cache,
+        simpleui_release=label,
+        simpleui_backup=backup_remote,
+        deploy_mode="wifi",
+        kindle_ip=ip,
+    )
+    return {
+        "ok": True,
+        "command": "wifi-install-simpleui",
+        "status": "installed",
+        "transport": transport,
+        "kindle_ip": ip,
+        "port": port,
+        "release": label,
+        "path": remote_plugin_dir(SIMPLEUI_DIR),
+        "source_path": str(source),
+        "backup": backup_remote,
+        "settings_preserved": True,
+        "message": simpleui_message(label, backup_remote is not None, wifi=True),
+    }
+
+
 def ssh_enable_message(ip: str | None = None) -> str:
     target = f"{ip} 的 " if ip else ""
     return (
@@ -1540,6 +2096,7 @@ def cmd_detect(args: argparse.Namespace) -> dict:
         "jailbroken": is_jailbroken(markers),
         "kual_present": "kual" in markers,
         "koreader_present": (kindle / "koreader").is_dir(),
+        "simpleui_present": (kindle / "koreader" / "plugins" / SIMPLEUI_DIR / "main.lua").is_file(),
     }
     payload["deploy_mode"] = "usb_or_wifi" if payload["koreader_present"] else "usb_required"
     if firmware:
@@ -1749,12 +2306,55 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
     }
 
 
+def attach_default_simpleui_usb(
+    kindle: Path,
+    cache: Path,
+    mirror: str | None,
+    skipped: bool,
+) -> tuple[dict | None, str, bool]:
+    present = simpleui_installed_on(kindle)
+    if not should_install_default_simpleui(present, skipped):
+        return None, "", present
+    try:
+        require_simpleui_device(kindle)
+        release, source = fetch_simpleui_release(cache, mirror)
+        payload = install_simpleui_usb(kindle, cache, source, simpleui_version_label(source, release))
+    except (SafetyError, NetworkError) as exc:
+        return None, str(exc), False
+    return payload, "", False
+
+
+def attach_default_simpleui_wifi(
+    ip: str,
+    port: int,
+    cache: Path,
+    mirror: str | None,
+    skipped: bool,
+) -> tuple[dict | None, str, bool]:
+    if skipped:
+        return None, "", False
+    try:
+        facts = parse_simpleui_probe(remote_shell(ip, port, cache, simpleui_probe_command()))
+    except (SafetyError, NetworkError) as exc:
+        return None, str(exc), False
+    if facts["plugin_present"]:
+        return None, "", True
+    try:
+        release, source = fetch_simpleui_release(cache, mirror)
+        payload = install_simpleui_wifi(ip, port, cache, source, simpleui_version_label(source, release))
+    except (SafetyError, NetworkError) as exc:
+        return None, str(exc), False
+    return payload, "", False
+
+
 def cmd_install_plugin(args: argparse.Namespace) -> dict:
     choices = plugin_choices(args.choice)
     kindle = require_kindle(args)
     if not (kindle / "koreader" / "plugins").is_dir():
         raise SafetyError("还没有安装 KOReader，不能先装插件。")
-    require_space(kindle, 40)
+    skipped = bool(args.no_simpleui)
+    present = simpleui_installed_on(kindle)
+    require_space(kindle, 40 if not should_install_default_simpleui(present, skipped) else 80)
     cache = cache_dir(args)
     installed: list[dict[str, str]] = []
     for choice in choices:
@@ -1762,14 +2362,26 @@ def cmd_install_plugin(args: argparse.Namespace) -> dict:
         dest = deploy_plugin(kindle, source, folder_name)
         installed.append({"choice": choice, "release": release, "path": str(dest)})
     sync_kindle(kindle)
-    write_state(cache, plugins=remember_plugins(cache, choices), deploy_mode="usb")
+    plugins = remember_plugins(cache, choices)
+    write_state(cache, plugins=plugins, deploy_mode="usb")
+    simpleui, simpleui_error, already = attach_default_simpleui_usb(kindle, cache, args.mirror, skipped)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
     return {
         "ok": True,
         "command": "install-plugin",
         "status": "installed",
         "installed": installed,
-        "message": f"已装好 {names}。可以继续收尾并安全弹出。",
+        "simpleui": simpleui,
+        "simpleui_error": simpleui_error,
+        "simpleui_already_present": already,
+        "message": plugin_bundle_message(
+            names,
+            plugins,
+            wifi=False,
+            simpleui=simpleui,
+            error=simpleui_error,
+            already_present=already,
+        ),
     }
 
 
@@ -1837,6 +2449,8 @@ def cmd_wifi_install_plugin(args: argparse.Namespace) -> dict:
         installed.append({"choice": choice, "release": release, "path": remote_plugin_dir(folder_name)})
     plugins = remember_plugins(cache, choices)
     write_state(cache, plugins=plugins, deploy_mode="wifi", kindle_ip=ip)
+    simpleui, simpleui_error, already = attach_default_simpleui_wifi(ip, port, cache, args.mirror, bool(args.no_simpleui))
+    names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
     return {
         "ok": True,
         "command": "wifi-install-plugin",
@@ -1845,8 +2459,49 @@ def cmd_wifi_install_plugin(args: argparse.Namespace) -> dict:
         "kindle_ip": ip,
         "port": port,
         "installed": installed,
-        "message": wifi_done_message(plugins),
+        "simpleui": simpleui,
+        "simpleui_error": simpleui_error,
+        "simpleui_already_present": already,
+        "message": plugin_bundle_message(
+            names,
+            plugins,
+            wifi=True,
+            simpleui=simpleui,
+            error=simpleui_error,
+            already_present=already,
+        ),
     }
+
+
+def load_simpleui_source(args: argparse.Namespace, cache: Path) -> tuple[str | None, Path]:
+    if args.source:
+        return None, resolve_simpleui_source(args.source)
+    release, source = fetch_simpleui_release(cache, args.mirror)
+    return release, source
+
+
+def cmd_install_simpleui(args: argparse.Namespace) -> dict:
+    kindle = require_kindle(args)
+    cache = cache_dir(args)
+    release, source = load_simpleui_source(args, cache)
+    return install_simpleui_usb(kindle, cache, source, simpleui_version_label(source, release))
+
+
+def cmd_wifi_install_simpleui(args: argparse.Namespace) -> dict:
+    ip = assert_lan_ip(args.ip)
+    port = validate_port(args.port)
+    if not port_open(ip, port, 1.5):
+        return {
+            "ok": True,
+            "command": "wifi-install-simpleui",
+            "status": "awaiting_user",
+            "kindle_ip": ip,
+            "port": port,
+            "message": ssh_enable_message(ip),
+        }
+    cache = cache_dir(args)
+    release, source = load_simpleui_source(args, cache)
+    return install_simpleui_wifi(ip, port, cache, source, simpleui_version_label(source, release))
 
 
 def cmd_restore_assets(args: argparse.Namespace) -> dict:
@@ -2018,6 +2673,143 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(_is_virtual_adapter("以太网适配器 vEthernet (WSL)"), "virtual wsl")
         check(not _is_virtual_adapter("无线局域网适配器 WLAN"), "real wifi adapter")
 
+        check(
+            remote_plugin_dir(SIMPLEUI_DIR) == "/mnt/us/koreader/plugins/simpleui.koplugin",
+            "remote simpleui path",
+        )
+        try:
+            remote_plugin_dir("random.koplugin")
+            check(False, "unknown plugin rejected")
+        except SafetyError:
+            check(True, "unknown plugin rejected")
+        chosen, chosen_asset = select_release(
+            [
+                {"draft": True, "tag_name": "draft", "assets": [{"name": SIMPLEUI_ASSET}]},
+                {"draft": False, "tag_name": "source-only", "assets": [{"name": "qiaomu-simpleui-main.zip"}]},
+                {
+                    "draft": False,
+                    "prerelease": True,
+                    "tag_name": "v3.0.0-qiaomu.3",
+                    "assets": [{"name": SIMPLEUI_ASSET}],
+                },
+            ],
+            is_simpleui_asset,
+        )
+        check(chosen["tag_name"] == "v3.0.0-qiaomu.3", "select prerelease simpleui asset")
+        check(chosen_asset["name"] == SIMPLEUI_ASSET, "simpleui asset name")
+        check(not is_simpleui_asset("qiaomu-simpleui-main.zip"), "reject source zip name")
+        check(should_install_default_simpleui(False, False), "default simpleui when missing")
+        check(not should_install_default_simpleui(True, False), "keep existing simpleui")
+        check(not should_install_default_simpleui(False, True), "explicit skip simpleui")
+        kept = plugin_bundle_message(
+            "weread.koplugin",
+            ["weread"],
+            wifi=False,
+            simpleui=None,
+            error="",
+            already_present=True,
+        )
+        check("没有覆盖" in kept and "要装吗" not in kept, "bundle keeps existing simpleui")
+        bundled = plugin_bundle_message(
+            "weread.koplugin",
+            ["weread"],
+            wifi=True,
+            simpleui={"message": "乔木 SimpleUI v1 已写入。"},
+            error="",
+            already_present=False,
+        )
+        check("乔木 SimpleUI v1" in bundled and "API Key" in bundled, "bundle adds weread login")
+        try:
+            select_release([{"draft": False, "assets": [{"name": "Source-code.zip"}]}], is_simpleui_asset)
+            check(False, "source zip release rejected")
+        except NetworkError:
+            check(True, "source zip release rejected")
+        digest = "a" * 64
+        check(
+            checksum_from_sums(f"{digest} *simpleui.koplugin.zip\n", SIMPLEUI_ASSET) == digest,
+            "parse sha256sums",
+        )
+        check(
+            valid_simpleui_backup("/mnt/us/koreader/backups/simpleui.koplugin-20261024-083011"),
+            "backup path",
+        )
+        check(not valid_simpleui_backup("/mnt/us/koreader/plugins/simpleui.koplugin"), "backup path not plugin")
+        check(
+            not valid_simpleui_backup("/mnt/us/koreader/backups/simpleui.koplugin-20261024-083011;rm"),
+            "backup path injection",
+        )
+        probe = "\n".join((
+            "REV_BEGIN",
+            "v2026.07.1-3-gabc",
+            "REV_END",
+            "COVER_OK",
+            "PLUGIN_PRESENT",
+            "SUI_PRESENT",
+            "COVER_SETTING_BEGIN",
+            "COVER_SETTING_END",
+        ))
+        facts = parse_simpleui_probe(probe)
+        check(facts["version"] == "2026.07.1" and facts["settings_present"] is True, "parse simpleui probe")
+        try:
+            parse_simpleui_probe(probe.replace("v2026.07.1", "v2025.08"))
+            check(False, "probe rejects old koreader")
+        except SafetyError:
+            check(True, "probe rejects old koreader")
+        try:
+            parse_simpleui_probe(
+                probe.replace("COVER_SETTING_END", '["coverbrowser.koplugin"] = true,\nCOVER_SETTING_END')
+            )
+            check(False, "probe rejects disabled coverbrowser")
+        except SafetyError:
+            check(True, "probe rejects disabled coverbrowser")
+
+        device = root / "simpleui-kindle"
+        (device / "system").mkdir(parents=True)
+        (device / "documents").mkdir()
+        device_plugins = device / "koreader" / "plugins"
+        (device_plugins / "coverbrowser.koplugin").mkdir(parents=True)
+        (device / "koreader" / "git-rev").write_text("v2025.12-1-gabc\n", encoding="utf-8")
+        try:
+            require_simpleui_device(device)
+            check(False, "reject old koreader on disk")
+        except SafetyError:
+            check(True, "reject old koreader on disk")
+        (device / "koreader" / "git-rev").write_text("v2026.07.1-3-gabc_kindle\n", encoding="utf-8")
+        (device_plugins / "coverbrowser.koplugin" / "disable").write_text("", encoding="utf-8")
+        try:
+            require_simpleui_device(device)
+            check(False, "reject disabled coverbrowser file")
+        except SafetyError:
+            check(True, "reject disabled coverbrowser file")
+        (device_plugins / "coverbrowser.koplugin" / "disable").unlink()
+        settings = device / "koreader" / "settings" / "simpleui" / "sui_settings.lua"
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"return { keep = true }\n")
+        old_plugin = device_plugins / SIMPLEUI_DIR
+        old_plugin.mkdir()
+        (old_plugin / "main.lua").write_text("old-ui", encoding="utf-8")
+        (old_plugin / "_meta.lua").write_text('version = "old"\n', encoding="utf-8")
+        try:
+            resolve_simpleui_source(str(old_plugin))
+            check(False, "reject kindle-tree source")
+        except SafetyError:
+            check(True, "reject kindle-tree source")
+        with tempfile.TemporaryDirectory() as other:
+            source = Path(other) / SIMPLEUI_DIR
+            source.mkdir()
+            (source / "main.lua").write_text("new-ui", encoding="utf-8")
+            (source / "_meta.lua").write_text('version = "3.0.0-qiaomu.3"\n', encoding="utf-8")
+            (source / "sui_settings.lua").write_text("do-not-copy-to-settings", encoding="utf-8")
+            check(resolve_simpleui_source(str(source.parent)) == source.resolve(), "resolve parent source")
+            result = install_simpleui_usb(device, root / "simpleui-cache", source, "v3.0.0-qiaomu.3")
+        check((device_plugins / SIMPLEUI_DIR / "main.lua").read_text(encoding="utf-8") == "new-ui", "simpleui replaced")
+        check(settings.read_bytes() == b"return { keep = true }\n", "simpleui settings preserved")
+        check((device_plugins / SIMPLEUI_DIR / "sui_settings.lua").is_file(), "plugin file stays in plugin")
+        backup = Path(str(result["backup"]))
+        check((backup / "main.lua").read_text(encoding="utf-8") == "old-ui", "simpleui backup")
+        check(result["settings_preserved"] is True, "settings flag")
+        check("settings/simpleui" in str(result["message"]), "simpleui message keeps settings")
+
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
@@ -2056,7 +2848,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="kindle_helper.py",
-        description="检测 Kindle 并安装 KOReader 与微信读书插件。写入前会确认目标是 Kindle 磁盘。",
+        description="检测 Kindle 并安装 KOReader、微信读书插件和默认的乔木 SimpleUI。写入前会确认目标是 Kindle 磁盘。",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2081,17 +2873,27 @@ def build_parser() -> argparse.ArgumentParser:
     reader.add_argument("--arch", required=True, choices=["kindlepw2", "kindlehf"])
     reader.add_argument("--force", action="store_true")
 
-    plugin = subparsers.add_parser("install-plugin", parents=[common], help="安装微信读书插件")
+    plugin = subparsers.add_parser("install-plugin", parents=[common], help="安装微信读书插件，并默认装上乔木 SimpleUI")
     plugin.add_argument("--choice", required=True, choices=["weread", "miuread", "both"])
+    plugin.add_argument("--no-simpleui", action="store_true", help="不安装默认的乔木 SimpleUI")
 
     scan = subparsers.add_parser("scan-wifi", parents=[common], help="扫描局域网里开着 KOReader SSH 的 Kindle")
     scan.add_argument("--ip", help="已知的 Kindle 局域网 IP，跳过扫描")
     scan.add_argument("--port", type=int, default=SSH_PORT, help="KOReader SSH 端口，默认 2222")
 
-    wireless = subparsers.add_parser("wifi-install-plugin", parents=[common], help="通过 SSH/SFTP 无线安装插件")
+    wireless = subparsers.add_parser("wifi-install-plugin", parents=[common], help="通过 SSH/SFTP 无线安装插件，并默认装上乔木 SimpleUI")
     wireless.add_argument("--ip", required=True, help="Kindle 的局域网 IP")
     wireless.add_argument("--choice", required=True, choices=["weread", "miuread", "both"])
     wireless.add_argument("--port", type=int, default=SSH_PORT, help="KOReader SSH 端口，默认 2222")
+    wireless.add_argument("--no-simpleui", action="store_true", help="不安装默认的乔木 SimpleUI")
+
+    simple = subparsers.add_parser("install-simpleui", parents=[common], help="安装乔木 SimpleUI")
+    simple.add_argument("--source", help="本地 simpleui.koplugin 目录，用来写回改过的界面")
+
+    simple_wifi = subparsers.add_parser("wifi-install-simpleui", parents=[common], help="通过 SSH/SFTP 安装乔木 SimpleUI")
+    simple_wifi.add_argument("--ip", required=True, help="Kindle 的局域网 IP")
+    simple_wifi.add_argument("--port", type=int, default=SSH_PORT, help="KOReader SSH 端口，默认 2222")
+    simple_wifi.add_argument("--source", help="本地 simpleui.koplugin 目录，用来写回改过的界面")
 
     subparsers.add_parser("restore-assets", parents=[common], help="恢复 AdBreak 修改前的 system/.assets")
     subparsers.add_parser("finalize", parents=[common], help="同步磁盘、删除下载缓存，并给出最终操作")
@@ -2118,6 +2920,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "install-plugin": cmd_install_plugin,
         "scan-wifi": cmd_scan_wifi,
         "wifi-install-plugin": cmd_wifi_install_plugin,
+        "install-simpleui": cmd_install_simpleui,
+        "wifi-install-simpleui": cmd_wifi_install_simpleui,
         "restore-assets": cmd_restore_assets,
         "finalize": cmd_finalize,
         "self-check": cmd_self_check,
