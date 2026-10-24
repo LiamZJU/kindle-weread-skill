@@ -33,14 +33,3 @@
 - 已装的 `weread.koplugin` v1.6.0 有书架、下载阅读、搜索和书评（书籍详情里的「推荐 / 最新」），没有手机版那种可浏览的书城和发现页。要更接近手机的书城（为你推荐、排行榜、分类、相似推荐），用觅阅 `miuread.koplugin` 6.0.0。两个插件可以并存。觅阅仍然没有手机「发现」里的社交动态。
 - 乔木 SimpleUI 3.0 在 `simpleui_onboarding_done` 还没有时，会在插件初始化里把 `start_with` 写成 `homescreen_simpleui`，并弹出布局向导。傻瓜安装要在第一次打开前就把启动项写好，并只在没有个人设置时跳过向导。`homescreen_simpleui` 不是 KOReader 原生值；SimpleUI 没装上或被禁用时不要写它，否则下次启动会是空白。无线安装期间不要改正在运行的 `settings.reader.lua`，退出时 KOReader 会用内存里的旧设置盖掉它。
 
-## Scratchpad
-
-任务：把安装收成傻瓜流程。连上后一次装完，第一次打开直接进 Simple UI，并在 Kindle 上引导扫微信二维码。
-
-[X] SKILL：连上后连续执行，默认 weread，最后只说怎么打开
-[X] USB 写入 `start_with = homescreen_simpleui`；没有个人设置时跳过布局向导
-[X] `wekindle.koplugin`：下次打开进入新主页；未登录时先说明 API Key，再显示二维码
-[X] 无线安装不改正在运行的 `settings.reader.lua`
-[X] `self-check` 通过
-[ ] 这台 Kindle 还没重新连上，设备上的旧安装还不会自动带上扫码引导
-
