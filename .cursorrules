@@ -4,7 +4,7 @@
 
 ## 必须遵守
 
-- 每次只让用户做一件事。说完 JSON 里的 `message` 就停，不要预告后面的阶段。
+- 每次需要用户在 Kindle 屏幕上操作时，才停下来交代那一件事。Kindle 一旦连上，电脑能做的安装要在同一轮里做完，不要中途询问插件，也不要逐阶段汇报。最后只告诉用户怎么打开新界面。
 - 写入 Kindle 只通过 `python scripts/kindle_helper.py <子命令> --json`。
 - 新对话先同时跑 `detect` 和 `scan-wifi`。没有 KOReader 时才要求 USB 和飞行模式；已经开着 KOReader SSH 时走无线安装，不要再让用户插线。固件 `>= 5.18.1` 的首次越狱改为先下载锁屏广告，因为要走 AdBreak。
 - 固件 `< 5.16.3`（含基准机 Paperwhite 第 7 代 KP3，`G090`，`5.16.2.1.1`）使用 `kindlepw2` 和 coplate KUAL。
@@ -19,7 +19,7 @@
 - WinterBreak 当前包的根目录包含 `.active_content_sandbox`。通用 Hotfix 来自 `KindleModding/Hotfix` 的 `Update_hotfix_universal.bin`，要在越狱重启之后再写入。
 - LanguageBreak 只复制压缩包里 `LanguageBreak/` 目录的内容。各语言 hotfix 不要一起丢进根目录；中文完成包是 `Update_hotfix_languagebreak-zh-Hans-CN.bin`。
 - AdBreak v1.2 只有 `adbreak.html`、`jb.sh` 和 `replace.bat`。它修改的是 `system/.assets` 里的 `details.html`，不是 Kindle 根目录。
-- 插件目录必须正好叫 `weread.koplugin` 或 `miuread.koplugin`，并且直接位于 `koreader/plugins/`。乔木 SimpleUI 是默认主页：`install-plugin` / `wifi-install-plugin` 会一并安装，不要先问。已经存在的 `simpleui.koplugin` 不要覆盖。用户明确拒绝时才加 `--no-simpleui`。
+- 插件目录必须正好叫 `weread.koplugin`、`miuread.koplugin` 或 `simpleui.koplugin`，并且直接位于 `koreader/plugins/`。乔木 SimpleUI 是默认主页：`install-plugin` / `wifi-install-plugin` 默认装 `weread` 并一并安装，不要先问。已经存在的 `simpleui.koplugin` 不要覆盖。用户明确拒绝时才加 `--no-simpleui`。USB 安装把 `settings.reader.lua` 的 `start_with` 写成 `homescreen_simpleui`。还没有 `settings/simpleui` 时写入 `simpleui_onboarding_done`，跳过布局向导；已有个人设置不要动。无线安装时 KOReader 还开着，不要改 `settings.reader.lua`，只放 `wekindle_home` 标记和 `wekindle.koplugin`，下次打开再写入启动项。未登录时这个插件弹出 API Key 说明和微信二维码。
 - 在 PowerShell 里内联复杂 Python 会被引号吃掉。需要临时脚本时写成文件再运行。
 - `Path("E:")` 在 Windows 上不是盘根。盘根要写成 `E:\`。
 - argparse 的公共参数要挂在每个子命令上。`detect --json` 才是文档里的写法；写在子命令前面不会被识别。
@@ -30,17 +30,16 @@
 - WinterBreak2 v1.1.0 的 `wb2.zip` 只有 `winterbreak2/dialoger.html`。成功标志是 `documents/JAILBROKEN.txt`（jb.sh v2.2.1，正文是 Winterbreak2 Jailbreak）以及 `libkh/bin/fbink`。这时 `detect` 的 `jailbroken` 仍是 false，因为还没有 `mkk`。jb.sh v2.2.1 已经拦住 OTA，官方说明可以跳过 Hotfix；「更新您的 Kindle」发灰是正常的。若根目录已有 `Update_hotfix_universal.bin`，用 `clean-ota --include-hotfix` 删掉，然后直接 `install-kual`。只有越狱屏幕明确写了要安装 hotfix 时才写 Hotfix。
 - coplate KUAL 用 `;log mrpi` 装完后，书库里的启动器是 0 字节的 `documents/KUAL.kual`，不是 `KUAL.azw2`。`kual_present` 要认 `.kual`。安装日志在 `extensions/MRInstaller/log/mrinstaller.log`，成功行是 `Success! :)`。日志里 fbink 查设备号出现 Segmentation fault 时，只要后面有 Success 并且 `KUAL.kual` 已生成，就可以继续装 KOReader。
 - 已装的 `weread.koplugin` v1.6.0 有书架、下载阅读、搜索和书评（书籍详情里的「推荐 / 最新」），没有手机版那种可浏览的书城和发现页。要更接近手机的书城（为你推荐、排行榜、分类、相似推荐），用觅阅 `miuread.koplugin` 6.0.0。两个插件可以并存。觅阅仍然没有手机「发现」里的社交动态。
-- 乔木 SimpleUI 是 `joeseesun/qiaomu-simpleui`，基于 Doctor Hetfield 的 SimpleUI 3.0.0（GPL-3.0）。安装必须用 Release 里的 `simpleui.koplugin.zip`（当前测试版 `v3.0.0-qiaomu.3`），目录名正好是 `simpleui.koplugin`，不要用 GitHub Source code ZIP。`/releases/latest` 会跳过预发布，这个仓库目前只有预发布，所以要读 Release 列表。需要 KOReader `>= 2026.03` 且启用 CoverBrowser。更新时备份插件目录，并保留设备上的 `settings/simpleui`（含 `sui_settings.lua` 和隐藏记录）。微信读书按钮只在 `weread` 已启用且提供 `openBookshelf` / `launch` 时出现。
+- 乔木 SimpleUI 3.0 在 `simpleui_onboarding_done` 还没有时，会在插件初始化里把 `start_with` 写成 `homescreen_simpleui`，并弹出布局向导。傻瓜安装要在第一次打开前就把启动项写好，并只在没有个人设置时跳过向导。`homescreen_simpleui` 不是 KOReader 原生值；SimpleUI 没装上或被禁用时不要写它，否则下次启动会是空白。无线安装期间不要改正在运行的 `settings.reader.lua`，退出时 KOReader 会用内存里的旧设置盖掉它。
 
 ## Scratchpad
 
-任务：完整技能的默认路径是 KOReader + 微信读书插件 + 乔木 SimpleUI。SimpleUI 不再单独询问。
+任务：把安装收成傻瓜流程。连上后一次装完，第一次打开直接进 Simple UI，并在 Kindle 上引导扫微信二维码。
 
-已完成、不要重做：局域网 Wi-Fi 部署；SimpleUI 的 Release 安装、备份和设置保护。
+[X] SKILL：连上后连续执行，默认 weread，最后只说怎么打开
+[X] USB 写入 `start_with = homescreen_simpleui`；没有个人设置时跳过布局向导
+[X] `wekindle.koplugin`：下次打开进入新主页；未登录时先说明 API Key，再显示二维码
+[X] 无线安装不改正在运行的 `settings.reader.lua`
+[X] `self-check` 通过
+[ ] 这台 Kindle 还没重新连上，设备上的旧安装还不会自动带上扫码引导
 
-[X] `install-plugin` / `wifi-install-plugin` 默认装 SimpleUI
-[X] 设备上已有 `simpleui.koplugin` 时不覆盖
-[X] 只有 `--no-simpleui` 或用户明确拒绝才跳过
-[X] 重装和改界面仍走 `install-simpleui` / `--source`
-
-下一步：等用户在真机上走一遍默认安装，或提出要改的主页。

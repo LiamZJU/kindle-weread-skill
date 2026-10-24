@@ -8,7 +8,9 @@
 
 用 Claude Code、Codex 或 Cursor 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)、社区微信读书插件，以及默认的乔木 SimpleUI 主页。界面不满意，就让助手改这份插件再写回 Kindle。
 
-脚本负责查找 Kindle 磁盘、下载公开的社区安装包、校验并写入。需要在 Kindle 屏幕上点按的步骤会一次只提示一个。它不会在没有你确认的情况下假装越狱已经成功。
+脚本负责查找 Kindle 磁盘、下载公开的社区安装包、校验并写入。Kindle 连上之后，电脑这边的安装会一次做完。需要在 Kindle 屏幕上点按的步骤才会单独停下来。它不会在没有你确认的情况下假装越狱已经成功。
+
+第一次打开 KOReader 会直接进入新主页。Kindle 上会提示先在手机微信读书获取 API Key，然后显示微信二维码。
 
 基准测试机是 Kindle Paperwhite 第 7 代（KP3，序列号前缀 `G090`），固件 `5.16.2.1.1`。这台机器使用软浮点包 `kindlepw2` 和经典 coplate KUAL。
 
@@ -64,7 +66,7 @@ python scripts/kindle_helper.py install-plugin --choice weread --json
 python scripts/kindle_helper.py finalize --json
 ```
 
-`install-plugin` 和 `wifi-install-plugin` 会在微信读书插件之后默认装上乔木 SimpleUI。设备上已经有 SimpleUI 时不会覆盖。只有明确不要这个主页时才加 `--no-simpleui`。
+`install-plugin` 默认安装 `weread`，并一起装上乔木 SimpleUI。设备上已经有 SimpleUI 时不会覆盖。只有明确不要这个主页时才加 `--no-simpleui`。装完后的下一次打开会直接进入新主页；还没登录时，Kindle 会引导扫描微信二维码。
 
 `--json` 把结果写到 stdout，进度写到 stderr。没有接上 Kindle 时，除 `self-check` 以外的命令会停下来，不会写入电脑上的其他磁盘。
 
@@ -77,12 +79,11 @@ python scripts/kindle_helper.py finalize --json
 
 越狱方案默认是 [WinterBreak](https://github.com/KindleModding/WinterBreak)。固件 `>= 5.18.1` 时改为 [AdBreak](https://github.com/KindleModding/AdBreak)。LanguageBreak 只会清空设备，脚本要求额外确认，不作为默认方案。
 
-插件二选一，也可以两个都装：
+默认是 `weread`：[finlater/weread.koplugin](https://github.com/finlater/weread.koplugin)。它和乔木 SimpleUI 的微信读书按钮接在一起。扫码前要在手机微信读书打开「我 → 设置 → 微信读书 Skill」并获取 API Key；第一次打开时，Kindle 会把这件事说在屏幕上，再显示二维码。
 
-- `weread`：[finlater/weread.koplugin](https://github.com/finlater/weread.koplugin)，轻量，扫码前要在微信读书 App 里打开「我 → 设置 → 微信读书 Skill」并获取 API Key。
-- `miuread`：[miumiupy98-art/miuread-koreader](https://github.com/miumiupy98-art/miuread-koreader)，功能更多，支持排版美化。书架管理是另一次授权。
+用户明确要求时才改用 `miuread`：[miumiupy98-art/miuread-koreader](https://github.com/miumiupy98-art/miuread-koreader)。它的功能更多，书架管理是另一次授权。
 
-安装位置固定为 `koreader/plugins/weread.koplugin/` 或 `koreader/plugins/miuread.koplugin/`。
+安装位置固定为 `koreader/plugins/weread.koplugin/`。扫码引导是本仓库自带的 `koreader/plugins/wekindle.koplugin/`。
 
 默认主页是 [乔木 SimpleUI](https://github.com/joeseesun/qiaomu-simpleui)。它基于 SimpleUI 3.0.0（GPL-3.0）：隐藏顶部下拉箭头、在底栏放微信读书入口、长按隐藏书籍并可恢复。上面的 `install-plugin` 会一起装上它。脚本只下载 Release 里的 `simpleui.koplugin.zip`，不使用 GitHub Source code ZIP，也不把这份 GPL 插件放进本仓库。需要 KOReader 2026.03 或更新，以及已启用的 CoverBrowser。
 

@@ -100,6 +100,12 @@ PLUGIN_DIRS = {
 SIMPLEUI_REPO = "joeseesun/qiaomu-simpleui"
 SIMPLEUI_DIR = "simpleui.koplugin"
 SIMPLEUI_ASSET = "simpleui.koplugin.zip"
+WEKINDLE_DIR = "wekindle.koplugin"
+ONBOARDING_SKIP_LUA = """-- kindle-weread-skill: a fresh install skips the layout picker
+return {
+    ["simpleui_onboarding_done"] = true,
+}
+"""
 SIMPLEUI_MIN_KOREADER = "2026.03"
 REMOTE_SUI_SETTINGS = "/mnt/us/koreader/settings/simpleui/sui_settings.lua"
 
@@ -1230,13 +1236,19 @@ def restore_plugin_dir(kindle: Path, folder_name: str, backup: Path | None) -> N
 
 
 def simpleui_message(label: str, had_backup: bool, *, wifi: bool) -> str:
-    restart = "请在 KOReader 里完全退出并重新打开。" if wifi else "请安全弹出 Kindle，完全退出并重新打开 KOReader。"
+    restart = "请在 KOReader 里完全退出，再重新打开。" if wifi else "请安全弹出 Kindle，再打开 KOReader。"
     previous = "原来的插件已备份。" if had_backup else ""
+    return f"乔木 SimpleUI {label} 已写入。{restart}{previous}打开后会直接进入新主页。个人设置没有改。"
+
+
+def open_home_message(*, wifi: bool) -> str:
+    if wifi:
+        lead = "装好了。请在 KOReader 里完全退出，再重新打开。"
+    else:
+        lead = "装好了。请安全弹出 Kindle，连上 Wi-Fi，打开 KUAL，点 KOReader。"
     return (
-        f"乔木 SimpleUI {label} 已写入。{restart}{previous}"
-        "个人设置和隐藏记录仍在 settings/simpleui，这次没有改动。"
-        "要一打开就进入主页，到设置 → 主页 → 行为 → 以主页启动。"
-        "weread 已启用且底栏有空位时，会出现微信读书入口。"
+        f"{lead}第一次会直接进入新主页。"
+        "屏幕会先说明如何在手机微信读书里获取 API Key，然后显示微信二维码。"
     )
 
 
@@ -1249,13 +1261,11 @@ def should_install_default_simpleui(already_present: bool, skipped: bool) -> boo
 
 
 def reading_login_note(plugins: Sequence[str]) -> str:
-    sentences: list[str] = []
     if "weread" in plugins:
-        sentences.append(
-            "微信读书：先在手机微信读书打开「我 → 设置 → 微信读书 Skill」获取 API Key，再从顶部工具栏扫码。"
-        )
+        return ""
+    sentences: list[str] = []
     if "miuread" in plugins:
-        sentences.append("觅阅：从顶部工具栏打开觅阅并按提示扫码。书架管理会再要求一次授权。")
+        sentences.append("觅阅：打开后按屏幕提示扫码。书架管理会再要求一次授权。")
     return "".join(sentences)
 
 
@@ -1268,10 +1278,13 @@ def plugin_bundle_message(
     error: str,
     already_present: bool,
 ) -> str:
+    home = simpleui is not None or already_present
+    if "weread" in plugins and not error and home:
+        kept = "乔木 SimpleUI 已经在设备上，这次没有覆盖。" if already_present and simpleui is None else ""
+        return open_home_message(wifi=wifi) + kept
     if simpleui is not None:
         text = f"已装好 {names}。" + str(simpleui.get("message", ""))
-        if wifi:
-            text += reading_login_note(plugins)
+        text += reading_login_note(plugins)
         return text
     if error:
         if wifi:
@@ -1299,7 +1312,7 @@ def install_simpleui_usb(kindle: Path, cache: Path, source: Path, label: str) ->
         restore_sui_settings(kindle, before)
         sync_kindle(kindle)
         raise SafetyError("安装碰到了 settings/simpleui，已撤回插件并写回原来的设置。")
-    sync_kindle(kindle)
+    prepare_home_usb(kindle)
     backup_text = None if backup is None else str(backup)
     write_state(cache, simpleui_release=label, simpleui_backup=backup_text)
     return {
@@ -1328,29 +1341,87 @@ def _replace_lua_setting(text: str, key: str, value: str) -> tuple[str, bool]:
     return text, False
 
 
-def preset_koreader_ssh(kindle: Path) -> None:
-    """Write KOReader's own SSH settings so the server can start on the next launch."""
-    directory = kindle / "koreader"
-    if not directory.is_dir():
-        raise SafetyError("没有 koreader 目录，不能预置 SSH。")
-    settings = directory / "settings.reader.lua"
-    if not settings.exists():
+def _lua_setting_present(text: str, key: str) -> bool:
+    return bool(re.search(rf'(?:\["{re.escape(key)}"\]|\b{re.escape(key)})\s*=', text))
+
+
+def ensure_lua_settings(path: Path, values: dict[str, str], *, error: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
         lines = ["-- koreader/settings.reader.lua", "return {"]
-        for key, value in SSH_LUA_SETTINGS.items():
+        for key, value in values.items():
             lines.append(f'    ["{key}"] = {value},')
         lines.append("}")
-        settings.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         return
-    text = settings.read_text(encoding="utf-8", errors="replace")
-    for key, value in SSH_LUA_SETTINGS.items():
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for key, value in values.items():
         text, changed = _replace_lua_setting(text, key, value)
         if changed:
             continue
         brace = text.rfind("}")
         if brace == -1:
-            raise SafetyError("settings.reader.lua 无法识别，没有改动 SSH 设置。请在 KOReader 里手动开启 SSH。")
+            raise SafetyError(error)
         text = text[:brace] + f'    ["{key}"] = {value},\n' + text[brace:]
-    settings.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def preset_koreader_ssh(kindle: Path) -> None:
+    """Write KOReader's own SSH settings so the server can start on the next launch."""
+    directory = kindle / "koreader"
+    if not directory.is_dir():
+        raise SafetyError("没有 koreader 目录，不能预置 SSH。")
+    ensure_lua_settings(
+        directory / "settings.reader.lua",
+        SSH_LUA_SETTINGS,
+        error="settings.reader.lua 无法识别，没有改动 SSH 设置。请在 KOReader 里手动开启 SSH。",
+    )
+
+
+def preset_simpleui_launch(kindle: Path) -> None:
+    """Make the next KOReader launch open SimpleUI, without touching an existing home folder."""
+    directory = kindle / "koreader"
+    if not directory.is_dir():
+        raise SafetyError("没有 koreader 目录，不能设置启动主页。")
+    path = directory / "settings.reader.lua"
+    existing = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+    values = {"start_with": '"homescreen_simpleui"'}
+    if not _lua_setting_present(existing, "home_dir"):
+        values["home_dir"] = '"/mnt/us/documents"'
+        if not _lua_setting_present(existing, "lock_home_folder"):
+            values["lock_home_folder"] = "true"
+    ensure_lua_settings(path, values, error="settings.reader.lua 无法识别，没有改启动主页。")
+
+
+def seed_simpleui_skip_onboarding(kindle: Path) -> bool:
+    """Skip the layout picker only when the user has no SimpleUI settings yet."""
+    path = sui_settings_path(kindle)
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(ONBOARDING_SKIP_LUA, encoding="utf-8", newline="\n")
+    return True
+
+
+def wekindle_source() -> Path:
+    source = Path(__file__).resolve().parent.parent / "plugins" / WEKINDLE_DIR
+    if not (source / "main.lua").is_file() or not (source / "_meta.lua").is_file():
+        raise SafetyError("缺少 plugins/wekindle.koplugin，不能完成首次扫码引导。")
+    return source
+
+
+def deploy_wekindle_usb(kindle: Path) -> Path:
+    return deploy_plugin(kindle, wekindle_source(), WEKINDLE_DIR)
+
+
+def prepare_home_usb(kindle: Path) -> None:
+    preset_simpleui_launch(kindle)
+    seed_simpleui_skip_onboarding(kindle)
+    marker = kindle / "koreader" / "wekindle_home"
+    marker.write_text("homescreen_simpleui\n", encoding="utf-8", newline="\n")
+    if (kindle / "koreader" / "plugins" / PLUGIN_DIRS["weread"] / "main.lua").is_file():
+        deploy_wekindle_usb(kindle)
+    sync_kindle(kindle)
 
 
 def is_lan_ip(value: str) -> bool:
@@ -1585,7 +1656,7 @@ def choose_kindle(candidates: Sequence[dict[str, object]]) -> dict[str, object] 
 
 
 def remote_plugin_dir(folder_name: str) -> str:
-    allowed = set(PLUGIN_DIRS.values()) | {SIMPLEUI_DIR}
+    allowed = set(PLUGIN_DIRS.values()) | {SIMPLEUI_DIR, WEKINDLE_DIR}
     if folder_name not in allowed or not re.fullmatch(r"[A-Za-z0-9._-]+", folder_name):
         raise SafetyError("拒绝把未知目录传到 Kindle。")
     return f"{REMOTE_PLUGIN_PARENT}/{folder_name}"
@@ -2015,6 +2086,7 @@ def install_simpleui_wifi(ip: str, port: int, cache: Path, source: Path, label: 
         deploy_mode="wifi",
         kindle_ip=ip,
     )
+    prepare_home_wifi(ip, port, cache)
     return {
         "ok": True,
         "command": "wifi-install-simpleui",
@@ -2031,6 +2103,34 @@ def install_simpleui_wifi(ip: str, port: int, cache: Path, source: Path, label: 
     }
 
 
+def prepare_home_wifi(ip: str, port: int, cache: Path) -> None:
+    """Arm the next launch. Do not rewrite settings.reader.lua while KOReader is running."""
+    remote_shell(
+        ip,
+        port,
+        cache,
+        "mkdir -p /mnt/us/koreader && printf '%s\\n' homescreen_simpleui > /mnt/us/koreader/wekindle_home && sync",
+    )
+    text = remote_shell(
+        ip,
+        port,
+        cache,
+        "if test -f /mnt/us/koreader/settings/simpleui/sui_settings.lua; then echo SUI_PRESENT; "
+        "else echo SUI_ABSENT; fi; "
+        "if test -f /mnt/us/koreader/plugins/weread.koplugin/main.lua; then echo WEREAD_PRESENT; fi",
+    )
+    if has_line(text, "SUI_ABSENT") and not has_line(text, "SUI_PRESENT"):
+        remote_shell(ip, port, cache, "mkdir -p /mnt/us/koreader/settings/simpleui && echo DIR_OK")
+        local = cache / "work" / "sui_settings.lua"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text(ONBOARDING_SKIP_LUA, encoding="utf-8", newline="\n")
+        upload_remote_sui_settings(ip, port, cache, local)
+        remote_shell(ip, port, cache, "sync")
+    if has_line(text, "WEREAD_PRESENT"):
+        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
+        upload_plugin(staged, ip, port, cache)
+
+
 def ssh_enable_message(ip: str | None = None) -> str:
     target = f"{ip} 的 " if ip else ""
     return (
@@ -2039,30 +2139,33 @@ def ssh_enable_message(ip: str | None = None) -> str:
     )
 
 
-def login_hint(plugins: Sequence[str]) -> str:
-    sentences = ["安全弹出 Kindle。打开 KUAL，启动 KOReader。"]
-    if "weread" in plugins:
-        sentences.append(
-            "微信读书：先在手机微信读书打开「我 → 设置 → 微信读书 Skill」获取 API Key，"
-            "再点 KOReader 顶部工具栏里的微信读书扫码。"
-        )
+def login_hint(plugins: Sequence[str], *, home: bool = False) -> str:
+    if home and "weread" in plugins:
+        return open_home_message(wifi=False)
+    sentences = ["装好了。请安全弹出 Kindle，打开 KUAL，点 KOReader。"]
+    if home:
+        sentences.append("第一次会直接进入新主页。")
     if "miuread" in plugins:
-        sentences.append("觅阅：点 KOReader 顶部工具栏里的觅阅，按提示扫码。书架管理会再要求一次授权。")
-    if not plugins:
-        sentences.append("然后从顶部工具栏进入已经安装的微信读书插件并扫码登录。")
+        sentences.append("觅阅会在屏幕上提示扫码。书架管理会再要求一次授权。")
+    if "weread" in plugins and not home:
+        sentences.append("微信读书会在屏幕上提示扫码。")
+    if not plugins and not home:
+        sentences.append("然后从顶部工具栏进入已经安装的阅读插件。")
     return "".join(sentences)
 
 
-def wifi_done_message(plugins: Sequence[str]) -> str:
-    sentences = ["插件已经通过 Wi-Fi 传到 Kindle。请在 KOReader 里完全退出并重新打开。"]
-    if "weread" in plugins:
-        sentences.append(
-            "微信读书：先在手机微信读书打开「我 → 设置 → 微信读书 Skill」获取 API Key，再从顶部工具栏扫码。"
-        )
+def wifi_done_message(plugins: Sequence[str], *, home: bool = False) -> str:
+    if home and "weread" in plugins:
+        return open_home_message(wifi=True)
+    sentences = ["装好了。请在 KOReader 里完全退出，再重新打开。"]
+    if home:
+        sentences.append("第一次会直接进入新主页。")
     if "miuread" in plugins:
-        sentences.append("觅阅：从顶部工具栏打开觅阅并按提示扫码。书架管理会再要求一次授权。")
-    if not plugins:
-        sentences.append("然后从顶部工具栏进入插件并扫码登录。")
+        sentences.append("觅阅会在屏幕上提示扫码。书架管理会再要求一次授权。")
+    if "weread" in plugins and not home:
+        sentences.append("微信读书会在屏幕上提示扫码。")
+    if not plugins and not home:
+        sentences.append("然后从顶部工具栏进入已经安装的阅读插件。")
     return "".join(sentences)
 
 
@@ -2301,7 +2404,7 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
         "ssh_error": ssh_error,
         "message": (
             f"KOReader {release.get('tag_name')}（{args.arch}）已写入 Kindle。{ssh_note}"
-            "先不要弹出。要装哪一个插件？A 是 weread，轻量；B 是觅阅，功能更多。也可以两个都装。"
+            "先不要弹出。接下来会装上微信读书和新主页。"
         ),
     }
 
@@ -2365,6 +2468,13 @@ def cmd_install_plugin(args: argparse.Namespace) -> dict:
     plugins = remember_plugins(cache, choices)
     write_state(cache, plugins=plugins, deploy_mode="usb")
     simpleui, simpleui_error, already = attach_default_simpleui_usb(kindle, cache, args.mirror, skipped)
+    if not skipped and simpleui_installed_on(kindle):
+        prepare_home_usb(kindle)
+    elif "weread" in choices:
+        deploy_wekindle_usb(kindle)
+        sync_kindle(kindle)
+    home_ready = not skipped and not simpleui_error and simpleui_installed_on(kindle)
+    write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
     return {
         "ok": True,
@@ -2450,6 +2560,13 @@ def cmd_wifi_install_plugin(args: argparse.Namespace) -> dict:
     plugins = remember_plugins(cache, choices)
     write_state(cache, plugins=plugins, deploy_mode="wifi", kindle_ip=ip)
     simpleui, simpleui_error, already = attach_default_simpleui_wifi(ip, port, cache, args.mirror, bool(args.no_simpleui))
+    if not args.no_simpleui and (simpleui is not None or already):
+        prepare_home_wifi(ip, port, cache)
+    elif "weread" in choices:
+        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
+        upload_plugin(staged, ip, port, cache)
+    home_ready = not args.no_simpleui and not simpleui_error and (simpleui is not None or already)
+    write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
     return {
         "ok": True,
@@ -2535,10 +2652,11 @@ def cmd_finalize(args: argparse.Namespace) -> dict:
     if not isinstance(plugins, list):
         plugins = []
     plugin_names = [str(item) for item in plugins]
+    home = state.get("simpleui_ready") is True
     if state.get("deploy_mode") == "wifi" and kindle is None:
-        message = wifi_done_message(plugin_names)
+        message = wifi_done_message(plugin_names, home=home)
     else:
-        message = login_hint(plugin_names)
+        message = login_hint(plugin_names, home=home)
     backup = cache / "backups" / "assets"
     if backup.is_dir():
         message += f" AdBreak 修改前的 .assets 备份仍留在 {backup}。"
@@ -2641,6 +2759,26 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check('["SSH_allow_no_password"] = true' in ssh_text, "ssh no password")
         check('["SSH_autostart"] = true' in ssh_text, "ssh autostart")
         check('["SSH_key_only_auth"] = false' in ssh_text, "ssh key auth off")
+        preset_simpleui_launch(ssh_root)
+        launch_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
+        check('["start_with"] = "homescreen_simpleui"' in launch_text, "start with simpleui")
+        check('["home_dir"] = "/mnt/us/documents"' in launch_text, "default documents home")
+        check('["SSH_port"] = "2222"' in launch_text, "launch preset keeps ssh")
+        (ssh_root / "koreader" / "settings.reader.lua").write_text(
+            'return {\n    ["home_dir"] = "/mnt/us/documents/Books",\n    ["start_with"] = "filemanager",\n}\n',
+            encoding="utf-8",
+        )
+        preset_simpleui_launch(ssh_root)
+        launch_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
+        check('"/mnt/us/documents/Books"' in launch_text, "keep custom home")
+        check(launch_text.count('["home_dir"]') == 1, "home dir not duplicated")
+        check('["start_with"] = "homescreen_simpleui"' in launch_text, "override start with")
+        check(seed_simpleui_skip_onboarding(ssh_root), "seed fresh onboarding skip")
+        seeded = ssh_root / "koreader" / "settings" / "simpleui" / "sui_settings.lua"
+        seeded_bytes = seeded.read_bytes()
+        check(b"simpleui_onboarding_done" in seeded_bytes, "onboarding skip key")
+        check(not seed_simpleui_skip_onboarding(ssh_root), "do not reseed onboarding")
+        check(seeded.read_bytes() == seeded_bytes, "reseed leaves settings")
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
             'return {\n    ["font"] = "Droid",\n    ["SSH_port"] = "22",\n}\n',
             encoding="utf-8",
@@ -2682,6 +2820,9 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
             check(False, "unknown plugin rejected")
         except SafetyError:
             check(True, "unknown plugin rejected")
+        check(remote_plugin_dir(WEKINDLE_DIR).endswith("/wekindle.koplugin"), "wekindle remote dir")
+        guide = (wekindle_source() / "main.lua").read_text(encoding="utf-8")
+        check("homescreen_simpleui" in guide and "qr_login" in guide, "login guide plugin")
         chosen, chosen_asset = select_release(
             [
                 {"draft": True, "tag_name": "draft", "assets": [{"name": SIMPLEUI_ASSET}]},
@@ -2718,7 +2859,7 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
             error="",
             already_present=False,
         )
-        check("乔木 SimpleUI v1" in bundled and "API Key" in bundled, "bundle adds weread login")
+        check("新主页" in bundled and "API Key" in bundled and "二维码" in bundled, "bundle opens home")
         try:
             select_release([{"draft": False, "assets": [{"name": "Source-code.zip"}]}], is_simpleui_asset)
             check(False, "source zip release rejected")
@@ -2808,7 +2949,15 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         backup = Path(str(result["backup"]))
         check((backup / "main.lua").read_text(encoding="utf-8") == "old-ui", "simpleui backup")
         check(result["settings_preserved"] is True, "settings flag")
-        check("settings/simpleui" in str(result["message"]), "simpleui message keeps settings")
+        check("新主页" in str(result["message"]), "simpleui message opens home")
+        reader = (device / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
+        check('["start_with"] = "homescreen_simpleui"' in reader, "install sets start_with")
+        check((device / "koreader" / "wekindle_home").is_file(), "home marker")
+        (device_plugins / "weread.koplugin").mkdir()
+        (device_plugins / "weread.koplugin" / "main.lua").write_text("return {}", encoding="utf-8")
+        prepare_home_usb(device)
+        check((device_plugins / WEKINDLE_DIR / "main.lua").is_file(), "login guide installed")
+        check(settings.read_bytes() == b"return { keep = true }\n", "guide keeps simpleui settings")
 
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))

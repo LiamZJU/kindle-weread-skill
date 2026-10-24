@@ -2,14 +2,14 @@
 name: kindle-weread-skill
 description: >-
   Guides a person through preparing their own Kindle, installing the community
-  jailbreak that matches the firmware, then KUAL, KOReader, and a WeRead
-  plugin (weread.koplugin or miuread.koplugin) and, by default, Qiaomu
-  SimpleUI (simpleui.koplugin) as the home screen. An existing SimpleUI
-  install is left in place. Can install over Wi-Fi with KOReader SSH on port
-  2222 when the device is already on the same LAN, and can push a locally
-  edited SimpleUI copy back to the device. Use when the user mentions Kindle,
-  KOReader, KUAL, WinterBreak, LanguageBreak, SSH, Wi-Fi, SimpleUI, 越狱,
-  微信读书, 主页, weread.koplugin, miuread, or simpleui.
+  jailbreak that matches the firmware, then KUAL, KOReader, the WeRead plugin,
+  and Qiaomu SimpleUI as the home screen. Once the Kindle is connected, the
+  computer-side install runs straight through. The first KOReader launch opens
+  SimpleUI and asks the user to scan a WeChat QR code on the Kindle. An
+  existing SimpleUI install is left in place. Can install over Wi-Fi with
+  KOReader SSH on port 2222 when the device is already on the same LAN. Use
+  when the user mentions Kindle, KOReader, KUAL, WinterBreak, LanguageBreak,
+  SSH, Wi-Fi, SimpleUI, 越狱, 微信读书, 主页, weread.koplugin, or simpleui.
 ---
 
 # Kindle 改装向导
@@ -26,8 +26,10 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
 
 ## 必须遵守
 
-- 一次只推进一个动作。把上一条 JSON 里的 `message` 用一两句话告诉用户，然后停下等回复。
-- 不要在同一条回复里讲解后面的阶段，也不要一次性贴出全部命令。
+- Kindle 还没连上时，只让用户做一件事。Kindle 一旦连上，同一轮里把电脑能完成的安装全部跑完，不要逐阶段汇报，也不要询问装哪一个插件。
+- 只有脚本返回的步骤必须在 Kindle 屏幕上完成时才停下来。把那一条 `message` 交给用户，等对方做完并重新连上，再把剩下的命令一次跑完。
+- 安装结束后只说最后一条成功命令的 `message`。那就是怎么打开新界面。不要再讲「设置 → 主页 → 以主页启动」，也不要叫用户自己找工具栏扫码。
+- 默认安装 `weread`。只有用户明确要觅阅时才用 `miuread` 或 `both`。
 - 只有 `scripts/kindle_helper.py` 可以写 Kindle。不要自己复制、解压或拼下载链接。
 - 脚本拒绝写入系统盘。不要用 `--path` 指向用户的主目录或系统目录来“试试看”。
 - 固件以 Kindle 盘内的 `system/version.txt` 为准。读不到时再问用户，不要猜。
@@ -38,6 +40,7 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
 - 国内或 GitHub 不稳定时，在命令后加 `--mirror https://ghfast.top/`。镜像只重试文件下载；失败时把脚本的 `error` 原样告诉用户。
 - 越狱可能变砖，并会影响保修。开始前用一句话说明。LanguageBreak 还会清空设备，只有用户明确要求才使用。
 - 乔木 SimpleUI 是默认主页。`install-plugin` 和 `wifi-install-plugin` 会一并装上，不要先问用户要不要。设备上已经有 `simpleui.koplugin` 时不要覆盖。只有用户明确说不要这个主页时才加 `--no-simpleui`。
+- 安装会把 KOReader 的 `start_with` 写成 `homescreen_simpleui`，并在还没有 `settings/simpleui` 时跳过布局向导。已经有的个人设置不要覆盖。无线安装时不要改正在运行的 `settings.reader.lua`；下一次打开由 `wekindle.koplugin` 写入。
 
 ## 状态
 
@@ -59,16 +62,24 @@ python scripts/kindle_helper.py scan-wifi --json
 - 状态 A：USB 上已经找到 Kindle，但 `koreader_present` 为假，并且没有扫到 2222；或者用户明确说还没装 KOReader。告诉用户：因为亚马逊原厂限制，第一次越狱和写入 KOReader 必须用一次 USB。然后请用户打开飞行模式并连上数据线，回复「已连接」。固件 `>= 5.18.1` 时不要先开飞行模式，这种机器要先联网下载锁屏广告，走 AdBreak。
 - 两个探测都没有结果，而且用户还没说明设备状态时，只问：已经装好 KOReader，并且和电脑在同一个 Wi-Fi 吗？不要同时讲解两套流程。
 
-用户确认 USB 已连接后：
-
-```bash
-python scripts/kindle_helper.py detect --json
-python scripts/kindle_helper.py clean-ota --json
-```
-
-然后只报告型号、固件和架构。`jailbroken` 且 `kual_present` 为真时，第三阶段的目标已经达成，直接进入阶段 4。已越狱但没有 KUAL 时进入阶段 3。都没有时进入阶段 2。
+用户确认 USB 已连接，或 `scan-wifi` 已经找到 Kindle 之后，按下面的「一次做完」继续。不要先停下来只报告型号。
 
 读不到固件时，只问型号和版本号。用户回答后，后续命令加上 `--firmware 5.16.2.1.1` 这样的值。盘内版本和用户说法冲突时，以盘内为准并告诉用户。用户已经知道 IP 时，用 `scan-wifi --ip <地址> --json`，不要再扫整段网。
+
+## 连上之后一次做完
+
+USB 连上后先运行 `detect` 和 `clean-ota`，再按设备现状往下走。能在电脑上完成的命令不要拆开。
+
+状态 B 没有插上 USB 时，不要运行 `clean-ota`。KOReader 已经在，并且扫到了 2222，就从第 5 步的无线命令开始，然后 `finalize`。
+
+1. 还没越狱：运行 `install-jailbreak`，把 `message` 交给用户，停。这是屏幕上的步骤。
+2. 对方回复「已重启」并重新连上后，再按阶段 2 判断要不要 Hotfix。需要的话运行 `install-hotfix` 并停。不需要就继续。
+3. 还没有 KUAL：运行 `install-kual`。`already_present` 就继续；否则把 `message` 交给用户，停，等 `;log mrpi` 做完并重新连上。
+4. 还没有 KOReader：按架构运行 `install-koreader`。成功后不要把这条 `message` 念给用户，直接装插件。
+5. 运行 `install-plugin --choice weread`。状态 B 改为 `wifi-install-plugin --ip <Kindle_IP> --choice weread`。不要问 A 还是 B。这条命令会装上乔木 SimpleUI，并让下一次打开直接进入新主页。
+6. 成功后立刻运行 `finalize`。只把 `finalize` 的 `message` 告诉用户。
+
+某一步失败时，只说 `error` 和下一步，不要继续假装已经装完。`simpleui_error` 有内容时，只说明微信读书插件已装好、主页没装上，以及错误原文。
 
 ## 阶段 2：越狱与 Hotfix
 
@@ -117,27 +128,21 @@ python scripts/kindle_helper.py install-kual --launcher peki --json
 
 ## 阶段 4：KOReader
 
-不要让用户手动拖文件夹。按已锁定的架构运行其中一个：
+不要让用户手动拖文件夹。按已锁定的架构运行其中一个，然后继续阶段 5，不要把这条命令的 `message` 念出来：
 
 ```bash
 python scripts/kindle_helper.py install-koreader --arch kindlepw2 --json
 python scripts/kindle_helper.py install-koreader --arch kindlehf --json
 ```
 
-成功后把 JSON 里的 `message` 发给用户。USB 安装会预置 KOReader 的 SSH：端口 2222、随 KOReader 启动、允许无密码登录。这次数据线还插着，插件继续走 USB，不要中途改成无线。
+USB 安装会预置 KOReader 的 SSH：端口 2222、随 KOReader 启动、允许无密码登录。这次数据线还插着，插件继续走 USB，不要中途改成无线。
 
-## 阶段 5：微信读书插件
+## 阶段 5：微信读书插件和新主页
 
-先只问这一句：
-
-> 要装哪一个？A：`weread.koplugin`，轻量，用微信读书官方 Skill 扫码。B：觅阅 `miuread.koplugin`，功能更多，包含排版和美化。也可以两个都装。
-
-数据线还连着时：
+不要询问装哪一个。默认：
 
 ```bash
 python scripts/kindle_helper.py install-plugin --choice weread --json
-python scripts/kindle_helper.py install-plugin --choice miuread --json
-python scripts/kindle_helper.py install-plugin --choice both --json
 ```
 
 状态 B 用无线命令，不要要求插 USB：
@@ -146,11 +151,19 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice weread --json
 ```
 
-`--choice` 同样可以是 `miuread` 或 `both`。脚本会把微信读书插件传到 `koreader/plugins/`。同一条命令默认再安装乔木 SimpleUI，不要另外询问，也不要在这条命令之外再跑一次 `install-simpleui`。设备上已经有 `simpleui.koplugin` 时，命令不会覆盖它。用户明确说不要这个主页时，才加 `--no-simpleui`。
+用户明确说要觅阅时，才把 `--choice` 换成 `miuread` 或 `both`。同一条命令默认再安装乔木 SimpleUI。设备上已经有 `simpleui.koplugin` 时不会覆盖它。用户明确说不要这个主页时，才加 `--no-simpleui`。
 
-端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。成功后把 `message` 发给用户后停下。`simpleui_error` 有内容时，只说明插件已装好、主页没装上，以及错误原文。不要同时运行 `finalize`。
+这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`，下一次完全退出再打开时生效。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
 
-脚本会把目录名固定成 `weread.koplugin` 或 `miuread.koplugin`，并要求里面有 `main.lua`。无线传输只接受局域网私有地址。
+端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。成功后不要停在这条 `message`，继续 `finalize`。
+
+脚本会把目录名固定成 `weread.koplugin`，并要求里面有 `main.lua`。无线传输只接受局域网私有地址。
+
+## 打开新界面
+
+`finalize` 的 `message` 是给用户的全部说明：弹出 Kindle、连上 Wi-Fi、从 KUAL 打开 KOReader。第一次会直接进入新主页。Kindle 上会先说明去手机微信读书获取 API Key，用户点「显示二维码」后才出现二维码。不要再补一套菜单路径。
+
+用户确认主页已经生效之前，不要开始改界面。确认之后再没有别的安装步骤。`finalize` 可以和阶段 5 放在同一轮，不要等用户先看完主页才运行它。
 
 ## 阶段 6：更新或修改 SimpleUI
 
@@ -158,7 +171,7 @@ python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice we
 
 用户要求重装主页、更新到新的 Release，或改主页、底栏、隐藏和其他界面时才做。不要在安装成功的同一条回复里开始改。
 
-乔木 SimpleUI 是 [joeseesun/qiaomu-simpleui](https://github.com/joeseesun/qiaomu-simpleui)，GPL-3.0。它只换主页、底栏和书库展示。阅读和微信读书书架仍由 KOReader 与 `weread.koplugin` 负责。需要 KOReader `2026.03` 或更新，并且启用内置 CoverBrowser。微信读书按钮只在 `weread` 已启用、且底栏有空位时出现。
+乔木 SimpleUI 是 [joeseesun/qiaomu-simpleui](https://github.com/joeseesun/qiaomu-simpleui)，GPL-3.0。它只换主页、底栏和书库展示。阅读和微信读书书架仍由 KOReader 与 `weread.koplugin` 负责。需要 KOReader `2026.03` 或更新，并且启用内置 CoverBrowser。第一次打开时，底栏会有微信读书入口；未登录时 Kindle 自己弹出扫码说明。
 
 重装时用和当前连接相同的通道。脚本只下载 Release 里的 `simpleui.koplugin.zip`（含预发布；不要用 GitHub Source code ZIP），校验 `SHA256SUMS`，目录名固定为 `simpleui.koplugin`。已经装过时会先备份旧目录。`koreader/settings/simpleui`（含隐藏记录）不覆盖；若写入过程碰到它，脚本会撤回插件并写回原设置。
 
@@ -174,9 +187,7 @@ python scripts/kindle_helper.py install-simpleui --source <目录> --json
 python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source <目录> --json
 ```
 
-`<目录>` 可以是 `simpleui.koplugin` 本身，或直接包含它的目录。安装结果里的 `source_path` 是刚解压的副本，`finalize` 清缓存后就没了。把返回的 `message` 发给用户，让对方完全退出并重新打开 KOReader，确认这一处。不要把插件源码提交进本仓库。
-
-用户确认主页已经生效之后，再运行 `finalize`。`finalize` 的 `message` 负责微信读书登录提示。
+`<目录>` 可以是 `simpleui.koplugin` 本身，或直接包含它的目录。安装结果里的 `source_path` 是刚解压的副本，`finalize` 清缓存后就没了。把返回的 `message` 发给用户，让对方完全退出并重新打开 KOReader。不要把插件源码提交进本仓库。`finalize` 在初次安装时已经运行过，改界面时不必再运行。
 
 ## 异常时只说原因和下一步
 
@@ -201,7 +212,7 @@ python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source 
 | `install-hotfix` | 把一个 Hotfix `.bin` 写到根目录 |
 | `install-kual` | 写入 MRPI，并把对应 KUAL 的 install `.bin` 放进 `mrpackages` |
 | `install-koreader --arch` | 下载匹配架构的最新 KOReader 并合并到根目录 |
-| `install-plugin --choice` | 经 USB 安装 `weread`、`miuread` 或 `both`，并默认装上乔木 SimpleUI |
+| `install-plugin --choice` | 经 USB 安装微信读书插件，默认 `weread`，并装上乔木 SimpleUI、启动主页和扫码引导 |
 | `scan-wifi` | 扫描本机所在局域网里开放 2222 的设备，也可用 `--ip` |
 | `wifi-install-plugin --ip --choice` | 用 SSH/SFTP 安装微信读书插件，并默认装上乔木 SimpleUI |
 | `install-simpleui` | 重装乔木 SimpleUI，或用 `--source` 写回本地改过的副本 |
