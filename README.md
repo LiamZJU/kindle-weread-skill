@@ -87,7 +87,7 @@ python scripts/kindle_helper.py finalize --json
 
 安装位置固定为 `koreader/plugins/weread.koplugin/`。扫码引导是本仓库自带的 `koreader/plugins/wekindle.koplugin/`。
 
-默认主页是 [乔木 SimpleUI](https://github.com/joeseesun/qiaomu-simpleui)。它基于 SimpleUI 3.0.0（GPL-3.0）：隐藏顶部下拉箭头、在底栏放微信读书入口、长按隐藏书籍并可恢复。上面的 `install-plugin` 会一起装上它。脚本只下载 Release 里的 `simpleui.koplugin.zip`，不使用 GitHub Source code ZIP，也不把这份 GPL 插件放进本仓库。需要 KOReader 2026.03 或更新，以及已启用的 CoverBrowser。
+默认主页是 [乔木 SimpleUI](https://github.com/joeseesun/qiaomu-simpleui)。它基于 SimpleUI 3.0.0（GPL-3.0）：隐藏顶部下拉箭头、在底栏放微信读书入口、长按隐藏书籍并可恢复。上面的 `install-plugin` 会一起装上它。脚本只下载 `scripts/pins.json` 里的 `simpleui.koplugin.zip`，不使用 GitHub Source code ZIP，也不把这份 GPL 插件放进本仓库。需要 KOReader 2026.03 或更新，以及已启用的 CoverBrowser。
 
 已经有 SimpleUI 时，安装微信读书插件不会覆盖它。要重装或改界面时，改电脑上的副本，再用单独的命令写回去。重装会先备份旧目录，并留下 `koreader/settings/simpleui` 里的布局和隐藏记录。
 
@@ -105,6 +105,47 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 ```
 
 `--path` 在 macOS 上类似 `/Volumes/Kindle`，在 Linux 上类似 `/media/<用户>/Kindle`。镜像前缀也可以放到环境变量 `KINDLE_GITHUB_MIRROR`。
+
+## 兼容范围
+
+| 设备 | 序列号前缀 | 固件 | 路线 | 验证 |
+| --- | --- | --- | --- | --- |
+| Kindle Paperwhite 第 7 代（KP3） | `G090` | `5.16.2.1.1` | WinterBreak，KOReader `kindlepw2`，coplate KUAL | 已验证 |
+| 其他型号、其他序列号前缀或其他固件 | — | — | 脚本仍按固件选择 WinterBreak、AdBreak、`kindlepw2` 或 `kindlehf` | 未验证 |
+
+已验证的只有这一台：Paperwhite 第 7 代 KP3，序列号前缀 `G090`，固件 `5.16.2.1.1`。表里其余行都是未验证。
+
+## 怎样算安装完成
+
+下面三件事都发生，才算安装完成：
+
+1. 第一次打开 KOReader 时进入乔木 SimpleUI。
+2. 按 Kindle 屏幕上的说明，在手机微信读书获取 API Key，扫描二维码后登录成功。
+3. 从主页打开一本书，正文能显示。
+
+少一件，这次安装还没完成。
+
+## 失败时如何恢复
+
+动手前把 `documents` 复制到电脑。
+
+- 越狱文件已经写上、但还没在 Kindle 屏幕上点过 WinterBreak：先不要点商店图标。后续处理按 [WinterBreak 说明](https://kindlemodding.org/jailbreaking/WinterBreak/) 里的 LocalStorage 和 Factory Reset。AdBreak 改过的广告文件，用 `python scripts/kindle_helper.py restore-assets --json` 还原 `system/.assets`。
+- 原厂界面还能开机，只是不想留 KOReader：删除 Kindle 上的 `koreader` 目录和 `extensions/koreader`。KUAL 可以留着。书仍在 `documents`。
+- 想回到官方系统：按 [退出越狱](https://kindlemodding.org/jailbreaking/unjailbreaking.html)，先恢复 OTA，再恢复出厂，然后安装官方固件 `.bin`。这一步会卸掉越狱。
+- 卡在 Update Failed：按 [恢复说明](https://kindlemodding.org/jailbreaking/recovering-from-a-reset.html)，把对应机型的官方固件 `.bin` 放到 USB 根目录，弹出后重启，等它装完。
+- 开不了机：按住电源键大约 40 秒，强制重启。电脑还能看到 Kindle 磁盘时，用上面的官方固件 `.bin`。电脑完全认不出磁盘时，这个工具修不好。
+
+## 官方系统更新
+
+亚马逊推送的系统更新一旦装上，越狱会失效，KOReader 也可能打不开。
+
+改装过程中，这个技能用三件事拦住更新：
+
+1. 开始时打开飞行模式。固件 `5.18.1` 及以上要先联网下载锁屏广告，那种机器先不要开飞行模式，广告下完再断开网络。
+2. 写入越狱文件之前运行 `clean-ota`。它删除根目录里的 `update.bin.tmp.partial`、`update.bin.tmp`、`update.bin` 和 `update_kindle*.bin`，避免一次已经下到一半的更新装上。
+3. WinterBreak 跑完之后，官方说明里后续更新会被拦住。WinterBreak2 成功时，「更新您的 Kindle」发灰，这是拦住更新之后的正常状态。越狱画面要求安装 Hotfix 时，脚本再写入 `Update_hotfix_universal.bin`。
+
+改装完成后不要点「更新您的 Kindle」，也不要把官方固件 `.bin` 放进根目录，除非你打算按上面的步骤退出越狱。
 
 ## 安全边界
 
