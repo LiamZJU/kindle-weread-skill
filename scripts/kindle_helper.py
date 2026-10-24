@@ -48,30 +48,28 @@ CGNAT = ipaddress.ip_network("100.64.0.0/10")
 # Shown after a wireless step. Install never writes SSH_autostart = true.
 SSH_OFF_NOTE = "用完后请回到顶部菜单 → 网络 → SSH 服务器，取消勾选 SSH 服务器。"
 
-# Verified 2026-10-21 against kindlemodding.org and the upstream release archives.
-# Softfloat MRPI is NiLuJe's classic 1.7.N package. The khf archive is only for
-# firmware >= 5.16.3. The coplate-era KUAL booklet is the f190a38 snapshot.
-MRPI_URLS = {
-    "coplate": (
-        "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/"
-        "installing-kual-mrpi/kual-mrinstaller-1.7.N-r19303.zip"
-    ),
-    "hardfloat": (
-        "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/"
-        "installing-kual-mrpi/kual-mrinstaller-khf.zip"
-    ),
+# Every file written to the Kindle is pinned in scripts/pins.json.
+PIN_KEYS = (
+    "winterbreak",
+    "winterbreak2",
+    "languagebreak",
+    "adbreak",
+    "hotfix",
+    "mrpi-coplate",
+    "mrpi-hardfloat",
+    "kual-coplate",
+    "kual-hardfloat",
+    "peki",
+    "koreader-kindlepw2",
+    "koreader-kindlehf",
+    "weread",
+    "miuread",
+    "simpleui",
+)
+KUAL_PIN_KEYS = {
+    "coplate": ("mrpi-coplate", "kual-coplate"),
+    "hardfloat": ("mrpi-hardfloat", "kual-hardfloat"),
 }
-KUAL_URLS = {
-    "coplate": (
-        "https://storage.gra.cloud.ovh.net/v1/AUTH_2ac4bfee353948ec8ea7fd1710574097/"
-        "mr-public/KUAL/KUAL-f190a38-20240104.tar.xz"
-    ),
-    "hardfloat": (
-        "https://github.com/yparitcher/KUAL_Booklet/releases/download/V1.4/"
-        "KOL-V1.4.2-g3795770-20231106-Frameworkless.tar.xz"
-    ),
-}
-PEKI_URL = "https://github.com/KindleTweaks/PEKI/releases/latest/download/PEKI.zip"
 
 SERIAL_PREFIXES = {
     "B00E": "Kindle Paperwhite 1 (2012) WiFi",
@@ -93,7 +91,6 @@ PLUGIN_DIRS = {
     "weread": "weread.koplugin",
     "miuread": "miuread.koplugin",
 }
-SIMPLEUI_REPO = "joeseesun/qiaomu-simpleui"
 SIMPLEUI_DIR = "simpleui.koplugin"
 SIMPLEUI_ASSET = "simpleui.koplugin.zip"
 WEKINDLE_DIR = "wekindle.koplugin"
@@ -104,18 +101,6 @@ return {
 """
 SIMPLEUI_MIN_KOREADER = "2026.03"
 REMOTE_SUI_SETTINGS = "/mnt/us/koreader/settings/simpleui/sui_settings.lua"
-
-GITHUB_REPOS = {
-    "winterbreak": "KindleModding/WinterBreak",
-    "winterbreak2": "KindleModding/Winterbreak2",
-    "languagebreak": "notmarek/LanguageBreak",
-    "adbreak": "KindleModding/AdBreak",
-    "hotfix": "KindleModding/Hotfix",
-    "koreader": "koreader/koreader",
-    "weread": "finlater/weread.koplugin",
-    "miuread": "miumiupy98-art/miuread-koreader",
-    "simpleui": SIMPLEUI_REPO,
-}
 
 
 class SafetyError(Exception):
@@ -216,27 +201,6 @@ def should_retry(exc: Exception) -> bool:
     return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
-def request_bytes(url: str, timeout: int, mirror: str | None, headers: dict[str, str] | None = None) -> bytes:
-    merged = {"User-Agent": USER_AGENT}
-    if headers:
-        merged.update(headers)
-    last_error: Exception | None = None
-    for candidate in mirror_candidates(url, mirror):
-        for attempt in range(3):
-            try:
-                request = urllib.request.Request(candidate, headers=merged)
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    return response.read()
-            except Exception as exc:
-                last_error = exc
-                if not should_retry(exc):
-                    break
-                delay = 2 ** attempt
-                log(f"请求失败，{delay} 秒后重试 ({attempt + 1}/3): {exc}")
-                time.sleep(delay)
-    raise NetworkError(f"下载失败: {url} ({last_error})")
-
-
 def download_file(url: str, dest: Path, mirror: str | None, timeout: int = 180) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_suffix(dest.suffix + ".part")
@@ -283,29 +247,100 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def github_releases(repo: str, mirror: str | None) -> list[dict]:
-    """Return recent releases, including prereleases.
+def pins_path() -> Path:
+    return Path(__file__).resolve().parent / "pins.json"
 
-    /releases/latest hides prereleases. Qiaomu SimpleUI currently publishes only
-    prerelease tags, so that endpoint is empty for this repository.
-    """
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
-    raw = request_bytes(
-        url,
-        timeout=30,
-        mirror=mirror,
-        headers={"Accept": "application/vnd.github+json"},
-    )
+
+def _validate_pin(key: str, item: object) -> dict[str, str]:
+    if not isinstance(item, dict):
+        raise SafetyError(f"下载清单里的 {key} 不是对象。")
+    version = str(item.get("version") or "").strip()
+    filename = str(item.get("filename") or "").strip()
+    url = str(item.get("url") or "").strip()
+    digest = str(item.get("sha256") or "").strip().lower()
+    if not version or not filename or not url.startswith("https://"):
+        raise SafetyError(f"下载清单里的 {key} 缺少 version、filename 或 https URL。")
+    if filename != Path(filename).name or "/" in filename or "\\" in filename:
+        raise SafetyError(f"下载清单里的 {key} 文件名不安全。")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SafetyError(f"下载清单里的 {key} SHA-256 无效。")
+    return {"version": version, "filename": filename, "url": url, "sha256": digest}
+
+
+def load_pins() -> dict[str, dict[str, str]]:
+    path = pins_path()
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise NetworkError(f"GitHub API 返回的不是 JSON: {repo}") from exc
-    if isinstance(payload, dict):
-        message = payload.get("message", "未知错误")
-        raise NetworkError(f"读取 {repo} 的 Release 列表失败: {message}")
-    if not isinstance(payload, list):
-        raise NetworkError(f"读取 {repo} 的 Release 列表失败。")
-    return [item for item in payload if isinstance(item, dict)]
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SafetyError(f"无法读取下载清单 {path.name}。") from exc
+    packages = payload.get("packages") if isinstance(payload, dict) else None
+    if not isinstance(packages, dict):
+        raise SafetyError("下载清单缺少 packages。")
+    loaded = {str(key): _validate_pin(str(key), item) for key, item in packages.items()}
+    missing = [key for key in PIN_KEYS if key not in loaded]
+    if missing:
+        raise SafetyError("下载清单缺少: " + ", ".join(missing))
+    return loaded
+
+
+def pin_for(key: str) -> dict[str, str]:
+    pins = load_pins()
+    if key not in pins:
+        raise SafetyError(f"下载清单里没有 {key}。")
+    return pins[key]
+
+
+def verify_pinned_file(path: Path, expected: str, label: str) -> None:
+    """Reject a file whose SHA-256 is not the pinned digest. Deletes it on mismatch."""
+    if not path.is_file():
+        raise SafetyError(f"缺少 {label}，已停止，没有写入 Kindle。")
+    actual = sha256_file(path)
+    if actual.lower() != expected.lower():
+        path.unlink(missing_ok=True)
+        raise SafetyError(
+            f"{label} 的 SHA-256 与下载清单不一致，已删除该文件并停止，没有写入 Kindle。"
+            f" 期望 {expected.lower()}，实际 {actual.lower()}。"
+        )
+
+
+def _cached_pin_matches(path: Path, expected: str) -> bool:
+    return path.is_file() and sha256_file(path).lower() == expected.lower()
+
+
+def download_pinned(key: str, cache: Path, mirror: str | None) -> tuple[dict[str, str], Path]:
+    """Download one pinned file. Mirror bytes are hashed the same way and rejected on mismatch."""
+    pin = pin_for(key)
+    dest = cache / "downloads" / pin["filename"]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if _cached_pin_matches(dest, pin["sha256"]):
+        log(f"使用已校验的缓存 {dest.name} ({pin['version']})")
+        return pin, dest
+    if dest.exists():
+        log(f"缓存 {dest.name} 与清单不一致，重新下载")
+        dest.unlink()
+    network_errors: list[str] = []
+    saw_mismatch = False
+    for url in mirror_candidates(pin["url"], mirror):
+        try:
+            download_file(url, dest, None)
+        except NetworkError as exc:
+            network_errors.append(str(exc))
+            if dest.exists():
+                dest.unlink()
+            continue
+        if _cached_pin_matches(dest, pin["sha256"]):
+            log(f"SHA-256 校验通过: {dest.name} ({pin['version']})")
+            return pin, dest
+        saw_mismatch = True
+        log(f"{pin['filename']} 与清单不一致，已丢弃: {url}")
+        if dest.exists():
+            dest.unlink()
+    if dest.exists():
+        dest.unlink()
+    if saw_mismatch:
+        raise SafetyError(f"{pin['filename']} 的 SHA-256 与下载清单不一致，已停止，没有写入 Kindle。")
+    detail = network_errors[-1] if network_errors else "没有可用的下载地址"
+    raise NetworkError(f"下载失败: {pin['filename']} ({detail})")
 
 
 def select_release(releases: Sequence[dict], predicate: Callable[[str], bool]) -> tuple[dict, dict]:
@@ -339,36 +374,6 @@ def checksum_from_sums(text: str, filename: str) -> str | None:
         if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
             return digest.lower()
     return None
-
-
-def github_latest(repo: str, mirror: str | None) -> dict:
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    raw = request_bytes(
-        url,
-        timeout=30,
-        mirror=mirror,
-        headers={"Accept": "application/vnd.github+json"},
-    )
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise NetworkError(f"GitHub API 返回的不是 JSON: {repo}") from exc
-    if "assets" not in payload:
-        message = payload.get("message", "未知错误")
-        raise NetworkError(f"读取 {repo} 最新 Release 失败: {message}")
-    return payload
-
-
-def choose_asset(release: dict, predicate: Callable[[str], bool], prefer: str | None = None) -> dict:
-    matched = [asset for asset in release.get("assets", []) if predicate(asset.get("name", ""))]
-    if prefer:
-        preferred = [asset for asset in matched if prefer in asset.get("name", "").lower()]
-        if preferred:
-            matched = preferred
-    if not matched:
-        tag = release.get("tag_name", "unknown")
-        raise NetworkError(f"在 Release {tag} 里没有找到需要的安装包。")
-    return matched[0]
 
 
 def safe_relative(name: str) -> Path | None:
@@ -808,28 +813,6 @@ def payload_root(extracted: Path, required_names: Sequence[str]) -> Path:
     raise SafetyError(f"压缩包里找不到 {', '.join(required_names)}。顶层是: {preview}")
 
 
-def download_named_release(repo: str, cache: Path, mirror: str | None, predicate: Callable[[str], bool], prefer: str | None = None) -> tuple[dict, Path]:
-    release = github_latest(repo, mirror)
-    asset = choose_asset(release, predicate, prefer)
-    dest = cache / "downloads" / asset["name"]
-    if dest.is_file() and dest.stat().st_size == asset.get("size", dest.stat().st_size):
-        log(f"使用已缓存的 {dest.name}")
-    else:
-        download_file(asset["browser_download_url"], dest, mirror)
-    sidecar_name = asset["name"] + ".sha256"
-    sidecar = next((item for item in release.get("assets", []) if item.get("name") == sidecar_name), None)
-    if sidecar:
-        sidecar_path = cache / "downloads" / sidecar_name
-        download_file(sidecar["browser_download_url"], sidecar_path, mirror)
-        digest = sidecar_path.read_text(encoding="utf-8", errors="replace").strip().split()[0]
-        actual = sha256_file(dest)
-        if actual.lower() != digest.lower():
-            dest.unlink(missing_ok=True)
-            raise SafetyError(f"{dest.name} 的 SHA-256 校验失败。")
-        log(f"SHA-256 校验通过: {dest.name}")
-    return release, dest
-
-
 def fresh_extract(archive: Path, cache: Path) -> Path:
     extracted = cache / "extracted" / archive.stem
     if extracted.exists():
@@ -953,7 +936,13 @@ def install_jailbreak_payload(kindle: Path, method: str, archive: Path, cache: P
         cached_hotfix = cache / "hotfix" / matches[0].name
         cached_hotfix.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(matches[0], cached_hotfix)
-        write_state(cache, hotfix_path=str(cached_hotfix), hotfix_name=cached_hotfix.name, jailbreak_method=method)
+        write_state(
+            cache,
+            hotfix_path=str(cached_hotfix),
+            hotfix_name=cached_hotfix.name,
+            hotfix_sha256=sha256_file(cached_hotfix),
+            jailbreak_method=method,
+        )
     else:
         raise SafetyError(f"未知越狱方案: {method}")
     copied = merge_tree(root, kindle)
@@ -966,22 +955,34 @@ def install_jailbreak_payload(kindle: Path, method: str, archive: Path, cache: P
     return {"copied_files": copied}
 
 
-def cache_universal_hotfix(cache: Path, mirror: str | None) -> Path:
-    release, archive = download_named_release(
-        GITHUB_REPOS["hotfix"],
-        cache,
-        mirror,
-        lambda name: name.lower() == "update_hotfix_universal.bin" or (
-            "universal" in name.lower() and name.lower().endswith(".bin")
-        ),
-    )
-    del release
-    cached = cache / "hotfix" / archive.name
+def remember_hotfix(cache: Path, blob: Path, digest: str) -> Path:
+    cached = cache / "hotfix" / blob.name
     cached.parent.mkdir(parents=True, exist_ok=True)
-    if archive.resolve() != cached.resolve():
-        shutil.copy2(archive, cached)
-    write_state(cache, hotfix_path=str(cached), hotfix_name=cached.name)
+    if blob.resolve() != cached.resolve():
+        shutil.copy2(blob, cached)
+    write_state(cache, hotfix_path=str(cached), hotfix_name=cached.name, hotfix_sha256=digest.lower())
     return cached
+
+
+def verified_hotfix_file(cache: Path, mirror: str | None) -> Path:
+    """Return a hotfix blob whose bytes match a recorded or pinned SHA-256."""
+    state = read_state(cache)
+    raw = state.get("hotfix_path")
+    expected = str(state.get("hotfix_sha256") or "").lower()
+    hotfix = Path(str(raw)) if raw else None
+    if (
+        hotfix is not None
+        and hotfix.is_file()
+        and re.fullmatch(r"[0-9a-f]{64}", expected)
+        and sha256_file(hotfix).lower() == expected
+    ):
+        return hotfix
+    if hotfix is not None and hotfix.is_file():
+        log("缓存的 Hotfix 校验失败，改为下载清单里的通用 Hotfix。")
+        hotfix.unlink()
+    pin, archive = download_pinned("hotfix", cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    return remember_hotfix(cache, archive, pin["sha256"])
 
 
 def select_install_bin(extracted: Path) -> Path:
@@ -995,8 +996,8 @@ def select_install_bin(extracted: Path) -> Path:
 
 
 def install_peki(kindle: Path, cache: Path, mirror: str | None) -> dict[str, object]:
-    archive = cache / "downloads" / "PEKI.zip"
-    download_file(PEKI_URL, archive, mirror)
+    pin, archive = download_pinned("peki", cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
     extracted = fresh_extract(archive, cache)
     jars = list(extracted.rglob("KUAL.jar"))
     scripts = list(extracted.rglob("KUAL.sh"))
@@ -1059,17 +1060,10 @@ def plugin_choices(choice: str) -> list[str]:
 
 def fetch_plugin_source(choice: str, cache: Path, mirror: str | None) -> tuple[str, str, Path]:
     folder_name = PLUGIN_DIRS[choice]
-    if choice == "weread":
-        predicate = lambda name: name.lower().endswith(".zip") and "weread.koplugin" in name.lower()
-        prefer = None
-    else:
-        predicate = lambda name: (
-            name.lower().endswith(".zip") and "miuread" in name.lower() and "beta" not in name.lower()
-        )
-        prefer = "full"
-    release, archive = download_named_release(GITHUB_REPOS[choice], cache, mirror, predicate, prefer)
+    pin, archive = download_pinned(choice, cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
     source = plugin_source(fresh_extract(archive, cache), folder_name)
-    return folder_name, str(release.get("tag_name")), source
+    return folder_name, pin["version"], source
 
 
 def remember_plugins(cache: Path, choices: Sequence[str]) -> list[str]:
@@ -1174,40 +1168,16 @@ def simpleui_version_label(source: Path, release: str | None) -> str:
     return match.group(1) if match else "local"
 
 
-def verify_sha256_sums(release: dict, archive: Path, cache: Path, mirror: str | None) -> None:
-    sums = next((item for item in release.get("assets", []) if item.get("name") == "SHA256SUMS"), None)
-    if not isinstance(sums, dict):
-        archive.unlink(missing_ok=True)
-        raise SafetyError("这个 Release 没有 SHA256SUMS，已停止。")
-    sums_path = cache / "downloads" / f"{archive.name}.SHA256SUMS"
-    download_file(str(sums["browser_download_url"]), sums_path, mirror)
-    expected = checksum_from_sums(sums_path.read_text(encoding="utf-8", errors="replace"), archive.name)
-    if expected is None:
-        archive.unlink(missing_ok=True)
-        raise SafetyError(f"SHA256SUMS 里没有 {archive.name}。")
-    actual = sha256_file(archive)
-    if actual.lower() != expected:
-        archive.unlink(missing_ok=True)
-        raise SafetyError(f"{archive.name} 的 SHA-256 校验失败。")
-    log(f"SHA-256 校验通过: {archive.name}")
-
-
 def fetch_simpleui_release(cache: Path, mirror: str | None) -> tuple[str, Path]:
-    release, asset = select_release(github_releases(SIMPLEUI_REPO, mirror), is_simpleui_asset)
-    if asset.get("name") != SIMPLEUI_ASSET:
+    pin, dest = download_pinned("simpleui", cache, mirror)
+    verify_pinned_file(dest, pin["sha256"], pin["filename"])
+    if dest.name != SIMPLEUI_ASSET:
+        dest.unlink(missing_ok=True)
         raise SafetyError("拒绝下载 Source code ZIP。安装包必须正好叫 simpleui.koplugin.zip。")
-    dest = cache / "downloads" / SIMPLEUI_ASSET
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    size = asset.get("size")
-    if dest.is_file() and size and dest.stat().st_size == size:
-        log(f"使用已缓存的 {dest.name}")
-    else:
-        download_file(str(asset["browser_download_url"]), dest, mirror)
-    verify_sha256_sums(release, dest, cache, mirror)
     source = plugin_source(fresh_extract(dest, cache), SIMPLEUI_DIR)
     if source.name != SIMPLEUI_DIR or not (source / "_meta.lua").is_file():
         raise SafetyError("安装包里没有合格的 simpleui.koplugin。不要改用 GitHub Source code ZIP。")
-    return str(release.get("tag_name") or ""), source
+    return pin["version"], source
 
 
 def backup_installed_plugin(kindle: Path, cache: Path, folder_name: str) -> Path | None:
@@ -2238,20 +2208,16 @@ def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
     validate_method(method, firmware, args.force, args.i_understand_this_wipes_the_kindle)
     require_space(kindle, 80)
     cache = cache_dir(args)
-    removed = clean_ota(kindle)
-    repo = GITHUB_REPOS[method]
-    if method == "winterbreak2":
-        predicate = lambda name: name.lower() == "wb2.zip"
-    elif method == "languagebreak":
-        predicate = lambda name: name.lower().endswith((".tar.gz", ".tgz", ".zip"))
-    elif method == "adbreak":
-        predicate = lambda name: "adbreak" in name.lower() and name.lower().endswith(".zip")
-    else:
-        predicate = lambda name: name.lower().endswith((".tar.gz", ".tgz", ".zip"))
-    prefer = ".tar.gz" if method in {"winterbreak", "languagebreak"} else None
-    release, archive = download_named_release(repo, cache, args.mirror, predicate, prefer)
+    pin, archive = download_pinned(method, cache, args.mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    hotfix_pin: dict[str, str] | None = None
+    hotfix_archive: Path | None = None
     if method != "languagebreak":
-        cache_universal_hotfix(cache, args.mirror)
+        hotfix_pin, hotfix_archive = download_pinned("hotfix", cache, args.mirror)
+        verify_pinned_file(hotfix_archive, hotfix_pin["sha256"], hotfix_pin["filename"])
+    removed = clean_ota(kindle)
+    if hotfix_pin is not None and hotfix_archive is not None:
+        remember_hotfix(cache, hotfix_archive, hotfix_pin["sha256"])
     details = install_jailbreak_payload(kindle, method, archive, cache, args.locale)
     write_state(cache, jailbreak_method=method)
     sync_kindle(kindle)
@@ -2264,7 +2230,7 @@ def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
         "status": "awaiting_user",
         "firmware": firmware,
         "method": method,
-        "release": release.get("tag_name"),
+        "release": pin["version"],
         "removed_ota": removed,
         "user_steps": steps,
         "message": message,
@@ -2276,10 +2242,9 @@ def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
 def cmd_install_hotfix(args: argparse.Namespace) -> dict:
     kindle = require_kindle(args)
     cache = cache_dir(args)
-    state = read_state(cache)
-    hotfix = Path(str(state["hotfix_path"])) if state.get("hotfix_path") else None
-    if hotfix is None or not hotfix.is_file():
-        hotfix = cache_universal_hotfix(cache, args.mirror)
+    hotfix = verified_hotfix_file(cache, args.mirror)
+    expected = str(read_state(cache).get("hotfix_sha256") or "")
+    verify_pinned_file(hotfix, expected, hotfix.name)
     require_space(kindle, 20)
     clean_ota(kindle, remove_hotfix_bins=True)
     target = kindle / hotfix.name
@@ -2325,10 +2290,11 @@ def cmd_install_kual(args: argparse.Namespace) -> dict:
         )
     require_space(kindle, 80)
     cache = cache_dir(args)
-    mrpi_archive = cache / "downloads" / Path(MRPI_URLS[variant]).name
-    kual_archive = cache / "downloads" / Path(KUAL_URLS[variant]).name
-    download_file(MRPI_URLS[variant], mrpi_archive, args.mirror)
-    download_file(KUAL_URLS[variant], kual_archive, args.mirror)
+    mrpi_key, kual_key = KUAL_PIN_KEYS[variant]
+    mrpi_pin, mrpi_archive = download_pinned(mrpi_key, cache, args.mirror)
+    kual_pin, kual_archive = download_pinned(kual_key, cache, args.mirror)
+    verify_pinned_file(mrpi_archive, mrpi_pin["sha256"], mrpi_pin["filename"])
+    verify_pinned_file(kual_archive, kual_pin["sha256"], kual_pin["filename"])
     mrpi_root = fresh_extract(mrpi_archive, cache)
     for folder_name in ("extensions", "mrpackages"):
         source = payload_root(mrpi_root, [folder_name]) / folder_name
@@ -2367,13 +2333,11 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
             raise SafetyError(f"固件 {firmware} 必须安装 {expected}，不能安装 {args.arch}。")
     require_space(kindle, 300)
     cache = cache_dir(args)
-    pattern = re.compile(rf"^koreader-{re.escape(args.arch)}-v.+\.zip$", re.IGNORECASE)
-    release, archive = download_named_release(
-        GITHUB_REPOS["koreader"],
-        cache,
-        args.mirror,
-        lambda name: bool(pattern.match(name)),
-    )
+    pin_key = f"koreader-{args.arch}"
+    pin, archive = download_pinned(pin_key, cache, args.mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    if f"koreader-{args.arch}-" not in pin["filename"]:
+        raise SafetyError(f"清单里的 {pin_key} 不是 {args.arch} 安装包，已停止，没有写入 Kindle。")
     extracted = fresh_extract(archive, cache)
     copied = merge_tree(koreader_root(extracted), kindle)
     launcher = kindle / "extensions" / "koreader"
@@ -2385,7 +2349,7 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
     write_state(
         cache,
         koreader_arch=args.arch,
-        koreader_release=release.get("tag_name"),
+        koreader_release=pin["version"],
         ssh_autostart=False,
     )
     return {
@@ -2393,11 +2357,11 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
         "command": "install-koreader",
         "status": "installed",
         "arch": args.arch,
-        "release": release.get("tag_name"),
+        "release": pin["version"],
         "copied_files": copied,
         "ssh_autostart": False,
         "message": (
-            f"KOReader {release.get('tag_name')}（{args.arch}）已写入 Kindle。"
+            f"KOReader {pin['version']}（{args.arch}）已写入 Kindle。"
             "SSH 不会随 KOReader 启动。需要无线操作时，再在 KOReader 里临时打开 SSH。"
             "先不要弹出。接下来会装上微信读书和新主页。"
         ),
@@ -2731,6 +2695,39 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
 
         digest = sha256_file(booklet_dir / "Update_KUALBooklet_install.bin")
         check(len(digest) == 64, "sha256")
+        pins = load_pins()
+        for key in PIN_KEYS:
+            item = pins[key]
+            check(re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None, f"pin hash {key}")
+            check(item["url"].startswith("https://"), f"pin url {key}")
+            check("/" not in item["filename"] and "\\" not in item["filename"], f"pin name {key}")
+        for arch in ("kindlepw2", "kindlehf"):
+            version = pins[f"koreader-{arch}"]["version"].removeprefix("v")
+            check(version_ge(version, SIMPLEUI_MIN_KOREADER), f"pinned {arch} meets simpleui")
+        check(
+            pins["koreader-kindlepw2"]["version"] == pins["koreader-kindlehf"]["version"],
+            "koreader arch versions match",
+        )
+        check(pins["simpleui"]["filename"] == SIMPLEUI_ASSET, "simpleui pin filename")
+        tampered = root / "tampered.bin"
+        tampered.write_bytes(b"not-the-release")
+        try:
+            verify_pinned_file(tampered, pins["hotfix"]["sha256"], "tampered.bin")
+            check(False, "pin mismatch raises")
+        except SafetyError as exc:
+            check(not tampered.exists(), "pin mismatch deletes file")
+            check("没有写入 Kindle" in str(exc), "pin mismatch fail closed")
+        kept = root / "kept.bin"
+        kept.write_bytes(b"pinned-bytes")
+        verify_pinned_file(kept, hashlib.sha256(b"pinned-bytes").hexdigest(), "kept.bin")
+        check(kept.is_file(), "matching pin kept")
+        check(not _cached_pin_matches(kept, pins["hotfix"]["sha256"]), "bad cache is not a pin hit")
+        mirrored = mirror_candidates(pins["weread"]["url"], "https://ghfast.top/")
+        check(len(mirrored) == 2 and mirrored[1].startswith("https://ghfast.top/https://"), "mirror still verified by hash")
+        helper_now = Path(__file__).read_text(encoding="utf-8")
+        check("def github_" + "latest(" not in helper_now, "no latest release helper")
+        check("def download_" + "named_release(" not in helper_now, "no unpinned release helper")
+        check("/releases/" + "latest" not in helper_now, "no latest release url")
 
         tar_path = root / "sample.tar"
         payload = b"marker"

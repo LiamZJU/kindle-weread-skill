@@ -108,6 +108,8 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 
 写入前，脚本要求目标同时有 `system` 和 `documents`，并且能看到 `version.txt`、`dictionaries` 或其他 Kindle 标记。Windows 会跳过系统盘；macOS 只接受 `/Volumes` 下的非系统卷；Linux 只接受 `/media`、`/mnt` 或 `/run/media`。压缩包里的绝对路径、`..` 和符号链接会被拒绝。
 
+每个会写到 Kindle 上的安装包都列在 `scripts/pins.json`：固定版本、下载地址和 SHA-256。脚本在写入之前计算文件哈希，和清单不一致就删除下载并停止。`--mirror` 换来的文件走同一条校验。
+
 `clean-ota` 只删除 Kindle 根目录中的升级残留，例如 `update.bin.tmp.partial`。它不会删除已经放好的 Hotfix。
 
 AdBreak 会先把原来的 `system/.assets` 备份到本机缓存。需要还原时运行：

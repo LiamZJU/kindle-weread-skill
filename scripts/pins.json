@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "note": "Bump a package by changing version, filename, url, and sha256 together. sha256 is the SHA-256 of the file bytes from that exact URL. A mismatch aborts before anything is written to the Kindle, including when --mirror is used. Hardfloat KUAL stays at 1.4.2 because ;log mrpi installs Update_KOLBooklet_V1.4.2_install.bin. KOReader v2026.07.1 is the newest stable release and satisfies SimpleUI's 2026.03 minimum.",
+  "packages": {
+    "winterbreak": {
+      "version": "v2.1.0",
+      "filename": "WinterBreak.tar.gz",
+      "url": "https://github.com/KindleModding/WinterBreak/releases/download/v2.1.0/WinterBreak.tar.gz",
+      "sha256": "dc04fff5fcb685834cba9f9e95d4818b473d4100b2d40b8bb7c598ad09eb850d"
+    },
+    "winterbreak2": {
+      "version": "v1.1.0",
+      "filename": "wb2.zip",
+      "url": "https://github.com/KindleModding/Winterbreak2/releases/download/v1.1.0/wb2.zip",
+      "sha256": "9e85970902a1f2af6b4c3243755d80595dd36404b85083f8be8c65a69d04cfdf"
+    },
+    "languagebreak": {
+      "version": "1.0.2.1",
+      "filename": "LanguageBreak-16.11.23.tar.gz",
+      "url": "https://github.com/notmarek/LanguageBreak/releases/download/1.0.2.1/LanguageBreak-16.11.23.tar.gz",
+      "sha256": "b995cd6c687d007a166f0459dbb39d75de32a24e85be09fe3d911a0eb3736b5f"
+    },
+    "adbreak": {
+      "version": "v1.2",
+      "filename": "adbreak.zip",
+      "url": "https://github.com/KindleModding/AdBreak/releases/download/v1.2/adbreak.zip",
+      "sha256": "8d4752fc09361e5bc19566a21c1081ee6091e4019265e3300131a166ff1f53c6"
+    },
+    "hotfix": {
+      "version": "2.5.0",
+      "filename": "Update_hotfix_universal.bin",
+      "url": "https://github.com/KindleModding/Hotfix/releases/download/2.5.0/Update_hotfix_universal.bin",
+      "sha256": "94d5c05254b70c4905392515411f620168ac238db62c7dcbc48a1e31d5de6c59"
+    },
+    "mrpi-coplate": {
+      "version": "1.7.N-r19303",
+      "filename": "kual-mrinstaller-1.7.N-r19303.zip",
+      "url": "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/installing-kual-mrpi/kual-mrinstaller-1.7.N-r19303.zip",
+      "sha256": "aa564dd3988bf5c94c093ebe63bc59e9d66f6c19684984225a02bcc75848e996"
+    },
+    "mrpi-hardfloat": {
+      "version": "1.7.N-r19303-khf",
+      "filename": "kual-mrinstaller-khf.zip",
+      "url": "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/installing-kual-mrpi/kual-mrinstaller-khf.zip",
+      "sha256": "9974dfc2d1e7687b3fc74d68f6b5aeab2428f22d83ab82e6d600a0384c607d09"
+    },
+    "kual-coplate": {
+      "version": "f190a38-20240104",
+      "filename": "KUAL-f190a38-20240104.tar.xz",
+      "url": "https://storage.gra.cloud.ovh.net/v1/AUTH_2ac4bfee353948ec8ea7fd1710574097/mr-public/KUAL/KUAL-f190a38-20240104.tar.xz",
+      "sha256": "4f3e99765604e2dcdf36227dfcbddbdf8079d495e7328e7ca432e3fc7a18475b"
+    },
+    "kual-hardfloat": {
+      "version": "1.4.2",
+      "filename": "KOL-V1.4.2-g3795770-20231106-Frameworkless.tar.xz",
+      "url": "https://github.com/yparitcher/KUAL_Booklet/releases/download/V1.4/KOL-V1.4.2-g3795770-20231106-Frameworkless.tar.xz",
+      "sha256": "a15ae497f9dbc158ce0d1853cb75a240fa9ce7be7249e533afa7fbdb164dfe37"
+    },
+    "peki": {
+      "version": "v1.0",
+      "filename": "PEKI.zip",
+      "url": "https://github.com/KindleTweaks/PEKI/releases/download/v1.0/PEKI.zip",
+      "sha256": "f653045909ed230496c3d8176c9901d3a6a1f693c52b488569be6a60e0852499"
+    },
+    "koreader-kindlepw2": {
+      "version": "v2026.07.1",
+      "filename": "koreader-kindlepw2-v2026.07.1.zip",
+      "url": "https://github.com/koreader/koreader/releases/download/v2026.07.1/koreader-kindlepw2-v2026.07.1.zip",
+      "sha256": "ea1f575c54492a2c679d128b7f3210fd7d6a87e5f5a1ff1f7a7fe2080ff68f86"
+    },
+    "koreader-kindlehf": {
+      "version": "v2026.07.1",
+      "filename": "koreader-kindlehf-v2026.07.1.zip",
+      "url": "https://github.com/koreader/koreader/releases/download/v2026.07.1/koreader-kindlehf-v2026.07.1.zip",
+      "sha256": "3343a916d12f36c01b59df1f65bd83ff5616e6c2a4dfbe919e7fa1400b8b1bbb"
+    },
+    "weread": {
+      "version": "v1.6.0",
+      "filename": "weread.koplugin-v1.6.0.zip",
+      "url": "https://github.com/finlater/weread.koplugin/releases/download/v1.6.0/weread.koplugin-v1.6.0.zip",
+      "sha256": "647abca30fe7638d67c5c24e483409acdedaa758194f177863d1385365258d51"
+    },
+    "miuread": {
+      "version": "v6.0.0",
+      "filename": "miuread-v6.0.0-full.zip",
+      "url": "https://github.com/miumiupy98-art/miuread-koreader/releases/download/v6.0.0/miuread-v6.0.0-full.zip",
+      "sha256": "aadd7d2785a18c2e66580f196363285525535d19c0182998a6e6f1700a35fc0f"
+    },
+    "simpleui": {
+      "version": "v3.0.0-qiaomu.3",
+      "filename": "simpleui.koplugin.zip",
+      "url": "https://github.com/joeseesun/qiaomu-simpleui/releases/download/v3.0.0-qiaomu.3/simpleui.koplugin.zip",
+      "sha256": "b510d7552f2aeeb1b39a0c8b9ccdcc673bdec7bc22ed7d0204eeb9e30d3c8c38"
+    }
+  }
+}

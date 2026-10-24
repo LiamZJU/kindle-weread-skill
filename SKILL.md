@@ -33,6 +33,7 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
 - 默认安装 `weread`。只有用户明确要觅阅时才用 `miuread` 或 `both`。
 - 只有 `scripts/kindle_helper.py` 可以写 Kindle。不要自己复制、解压或拼下载链接。
 - 脚本拒绝写入系统盘。不要用 `--path` 指向用户的主目录或系统目录来“试试看”。
+- 下载只使用 `scripts/pins.json` 里的版本和 SHA-256。校验失败就停，不要改下别的 Release，也不要跳过校验。`--mirror` 得到的文件走同一条校验。
 - 固件以 Kindle 盘内的 `system/version.txt` 为准。读不到时再问用户，不要猜。
 - 架构只按下面的分界判断，不要换成别的安装包：
   - 固件 `< 5.16.3`：`legacy_softfloat`，KOReader 用 `kindlepw2`，KUAL 用 `coplate`。
@@ -175,7 +176,7 @@ python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice we
 
 乔木 SimpleUI 是 [joeseesun/qiaomu-simpleui](https://github.com/joeseesun/qiaomu-simpleui)，GPL-3.0。它只换主页、底栏和书库展示。阅读和微信读书书架仍由 KOReader 与 `weread.koplugin` 负责。需要 KOReader `2026.03` 或更新，并且启用内置 CoverBrowser。第一次打开时，底栏会有微信读书入口；未登录时 Kindle 自己弹出扫码说明。
 
-重装时用和当前连接相同的通道。脚本只下载 Release 里的 `simpleui.koplugin.zip`（含预发布；不要用 GitHub Source code ZIP），校验 `SHA256SUMS`，目录名固定为 `simpleui.koplugin`。已经装过时会先备份旧目录。`koreader/settings/simpleui`（含隐藏记录）不覆盖；若写入过程碰到它，脚本会撤回插件并写回原设置。
+重装时用和当前连接相同的通道。脚本只下载 `scripts/pins.json` 里登记的 `simpleui.koplugin.zip`（含预发布；不要用 GitHub Source code ZIP），按清单里的 SHA-256 校验，不一致就停止，镜像下载也一样。目录名固定为 `simpleui.koplugin`。已经装过时会先备份旧目录。`koreader/settings/simpleui`（含隐藏记录）不覆盖；若写入过程碰到它，脚本会撤回插件并写回原设置。
 
 ```bash
 python scripts/kindle_helper.py install-simpleui --json
@@ -213,7 +214,7 @@ python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source 
 | `install-jailbreak` | 下载并写入越狱包，Hotfix 先放进缓存 |
 | `install-hotfix` | 把一个 Hotfix `.bin` 写到根目录 |
 | `install-kual` | 写入 MRPI，并把对应 KUAL 的 install `.bin` 放进 `mrpackages` |
-| `install-koreader --arch` | 下载匹配架构的最新 KOReader 并合并到根目录 |
+| `install-koreader --arch` | 下载清单里对应架构的 KOReader 并合并到根目录 |
 | `install-plugin --choice` | 经 USB 安装微信读书插件，默认 `weread`，并装上乔木 SimpleUI、启动主页和扫码引导 |
 | `scan-wifi` | 扫描本机所在局域网里开放 2222 的设备，也可用 `--ip` |
 | `wifi-install-plugin --ip --choice` | 用 SSH/SFTP 安装微信读书插件，并默认装上乔木 SimpleUI |

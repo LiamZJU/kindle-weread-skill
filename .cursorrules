@@ -15,6 +15,7 @@
 ## Lessons
 
 - 软浮点 MRPI 是 `kual-mrinstaller-1.7.N-r19303.zip`，KUAL booklet 是 `KUAL-f190a38` 里的 `Update_KUALBooklet_*_install.bin`。`kual-mrinstaller-khf` 只用于固件 `>= 5.16.3`。
+- 安装包的版本、地址和 SHA-256 只写在 `scripts/pins.json`。不要改回 `releases/latest`。哈希不一致就停止，不要写入 Kindle。`--mirror` 下载到的文件也要和清单里的哈希一致。
 - 硬浮点启动器安装包是 `Update_KOLBooklet_V1.4.2_install.bin`，仍然用 `;log mrpi` 安装。`;log mrpi` 没反应时才改用 PEKI。
 - WinterBreak 当前包的根目录包含 `.active_content_sandbox`。通用 Hotfix 来自 `KindleModding/Hotfix` 的 `Update_hotfix_universal.bin`，要在越狱重启之后再写入。
 - LanguageBreak 只复制压缩包里 `LanguageBreak/` 目录的内容。各语言 hotfix 不要一起丢进根目录；中文完成包是 `Update_hotfix_languagebreak-zh-Hans-CN.bin`。
