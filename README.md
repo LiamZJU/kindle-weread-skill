@@ -123,8 +123,6 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 2. 按 Kindle 屏幕上的说明，在手机微信读书获取 API Key，扫描二维码后登录成功。
 3. 从主页打开一本书，正文能显示。
 
-少一件，这次安装还没完成。
-
 ## 失败时如何恢复
 
 动手前把 `documents` 复制到电脑。
