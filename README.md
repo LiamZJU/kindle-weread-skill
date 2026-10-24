@@ -47,7 +47,7 @@ macOS/Linux: ~/.cursor/skills/kindle-weread-skill/
 
 ```bash
 mkdir -p ~/.claude/skills
-git clone <本仓库地址> ~/.claude/skills/kindle-weread-skill
+git clone --branch v0.1 https://github.com/LiamZJU/kindle-weread-skill.git ~/.claude/skills/kindle-weread-skill
 ```
 
 然后说「帮我给 Kindle 安装 KOReader 和微信读书」。助手会按 `SKILL.md` 调用 `scripts/kindle_helper.py`。
