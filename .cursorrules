@@ -23,7 +23,7 @@
 - 在 PowerShell 里内联复杂 Python 会被引号吃掉。需要临时脚本时写成文件再运行。
 - `Path("E:")` 在 Windows 上不是盘根。盘根要写成 `E:\`。
 - argparse 的公共参数要挂在每个子命令上。`detect --json` 才是文档里的写法；写在子命令前面不会被识别。
-- KOReader SSH 写在 `koreader/settings.reader.lua`：`SSH_port` 为 `"2222"`，`SSH_allow_no_password` 和 `SSH_autostart` 为 true，`SSH_key_only_auth` 必须为 false，否则无密码登录不会生效。
+- 安装 KOReader 后 SSH 不能自启动。只把 `koreader/settings.reader.lua` 里的 `SSH_autostart` 写成 false，不要写成 true，也不要预置无密码登录。需要 `scan-wifi`、`wifi-install-plugin`、`wifi-install-simpleui` 或写回 SimpleUI 时，让用户在 KOReader 里临时打开：顶部菜单 → 网络 → SSH 服务器，勾选 SSH 服务器和允许无密码登录。用户手动打开后，无线命令仍连接端口 2222。做完后让用户取消勾选 SSH 服务器。无线安装期间不要改正在运行的 `settings.reader.lua`。
 - 无线插件目录是 `/mnt/us/koreader/plugins/weread.koplugin` 或 `miuread.koplugin`。只连接局域网私有 IPv4。网段大于 /24 时只扫本机所在的 /24，端口固定为 2222。
 - 中文 Windows 的 `ipconfig` 是 GBK/OEM 编码。按 UTF-8 硬解会丢掉「子网掩码」，扫描会退到错误网段。WSL 的 `vEthernet` 不要扫，Kindle 在家里的 Wi-Fi 网段上。
 - 枚举盘符前要关掉 Windows 的“请插入磁盘”对话框，并跳过 A:、B: 和光驱。Kindle 只认带 `system` 与 `documents` 的可移动盘或第二块固定盘。

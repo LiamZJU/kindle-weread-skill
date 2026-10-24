@@ -45,12 +45,8 @@ SSH_PORT = 2222
 SSH_USER = "root"
 REMOTE_PLUGIN_PARENT = "/mnt/us/koreader/plugins"
 CGNAT = ipaddress.ip_network("100.64.0.0/10")
-SSH_LUA_SETTINGS = {
-    "SSH_port": '"2222"',
-    "SSH_allow_no_password": "true",
-    "SSH_autostart": "true",
-    "SSH_key_only_auth": "false",
-}
+# Shown after a wireless step. Install never writes SSH_autostart = true.
+SSH_OFF_NOTE = "用完后请回到顶部菜单 → 网络 → SSH 服务器，取消勾选 SSH 服务器。"
 
 # Verified 2026-10-21 against kindlemodding.org and the upstream release archives.
 # Softfloat MRPI is NiLuJe's classic 1.7.N package. The khf archive is only for
@@ -1238,7 +1234,8 @@ def restore_plugin_dir(kindle: Path, folder_name: str, backup: Path | None) -> N
 def simpleui_message(label: str, had_backup: bool, *, wifi: bool) -> str:
     restart = "请在 KOReader 里完全退出，再重新打开。" if wifi else "请安全弹出 Kindle，再打开 KOReader。"
     previous = "原来的插件已备份。" if had_backup else ""
-    return f"乔木 SimpleUI {label} 已写入。{restart}{previous}打开后会直接进入新主页。个人设置没有改。"
+    ssh = SSH_OFF_NOTE if wifi else ""
+    return f"乔木 SimpleUI {label} 已写入。{restart}{previous}打开后会直接进入新主页。个人设置没有改。{ssh}"
 
 
 def open_home_message(*, wifi: bool) -> str:
@@ -1246,10 +1243,13 @@ def open_home_message(*, wifi: bool) -> str:
         lead = "装好了。请在 KOReader 里完全退出，再重新打开。"
     else:
         lead = "装好了。请安全弹出 Kindle，连上 Wi-Fi，打开 KUAL，点 KOReader。"
-    return (
+    text = (
         f"{lead}第一次会直接进入新主页。"
         "屏幕会先说明如何在手机微信读书里获取 API Key，然后显示微信二维码。"
     )
+    if wifi:
+        text += SSH_OFF_NOTE
+    return text
 
 
 def simpleui_installed_on(kindle: Path) -> bool:
@@ -1366,15 +1366,15 @@ def ensure_lua_settings(path: Path, values: dict[str, str], *, error: str) -> No
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def preset_koreader_ssh(kindle: Path) -> None:
-    """Write KOReader's own SSH settings so the server can start on the next launch."""
+def disable_koreader_ssh_autostart(kindle: Path) -> None:
+    """Keep KOReader from starting SSH on launch. Never write SSH_autostart = true."""
     directory = kindle / "koreader"
     if not directory.is_dir():
-        raise SafetyError("没有 koreader 目录，不能预置 SSH。")
+        raise SafetyError("没有 koreader 目录，不能关闭 SSH 自启动。")
     ensure_lua_settings(
         directory / "settings.reader.lua",
-        SSH_LUA_SETTINGS,
-        error="settings.reader.lua 无法识别，没有改动 SSH 设置。请在 KOReader 里手动开启 SSH。",
+        {"SSH_autostart": "false"},
+        error="settings.reader.lua 无法识别，没有关闭 SSH 自启动。",
     )
 
 
@@ -1828,8 +1828,8 @@ def paramiko_upload(local_dir: Path, ip: str, port: int) -> None:
         raise
     except Exception as exc:
         raise SafetyError(
-            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中勾选 SSH 服务器，并勾选允许无密码登录。"
-            f" 详细信息: {exc}"
+            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中临时勾选 SSH 服务器，并勾选允许无密码登录。"
+            f"{SSH_OFF_NOTE} 详细信息: {exc}"
         ) from exc
     finally:
         client.close()
@@ -1866,8 +1866,8 @@ def paramiko_connect(ip: str, port: int) -> object:
     except Exception as exc:
         client.close()
         raise SafetyError(
-            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中勾选 SSH 服务器，并勾选允许无密码登录。"
-            f" 详细信息: {exc}"
+            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中临时勾选 SSH 服务器，并勾选允许无密码登录。"
+            f"{SSH_OFF_NOTE} 详细信息: {exc}"
         ) from exc
     return client
 
@@ -2135,7 +2135,8 @@ def ssh_enable_message(ip: str | None = None) -> str:
     target = f"{ip} 的 " if ip else ""
     return (
         f"还连不上{target}{SSH_PORT} 端口。请打开 KOReader，进入顶部菜单 → 网络 → SSH 服务器，"
-        "勾选 SSH 服务器，并勾选允许无密码登录。确认和电脑在同一个 Wi-Fi 后，回复「SSH 已开」。"
+        "临时勾选 SSH 服务器，并勾选允许无密码登录。确认和电脑在同一个 Wi-Fi 后，回复「SSH 已开」。"
+        + SSH_OFF_NOTE
     )
 
 
@@ -2166,7 +2167,7 @@ def wifi_done_message(plugins: Sequence[str], *, home: bool = False) -> str:
         sentences.append("微信读书会在屏幕上提示扫码。")
     if not plugins and not home:
         sentences.append("然后从顶部工具栏进入已经安装的阅读插件。")
-    return "".join(sentences)
+    return "".join(sentences) + SSH_OFF_NOTE
 
 
 def emit(args: argparse.Namespace, payload: dict, code: int) -> None:
@@ -2379,20 +2380,14 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
     program = kindle / "koreader"
     if not program.is_dir() or not launcher.is_dir():
         raise SafetyError("解压后没有同时得到 koreader 和 extensions/koreader。Kindle 上的半成品请先不要使用。")
-    ssh_preset = True
-    ssh_error = ""
-    try:
-        preset_koreader_ssh(kindle)
-    except SafetyError as exc:
-        ssh_preset = False
-        ssh_error = str(exc)
-        log(ssh_error)
+    disable_koreader_ssh_autostart(kindle)
     sync_kindle(kindle)
-    write_state(cache, koreader_arch=args.arch, koreader_release=release.get("tag_name"), ssh_preset=ssh_preset)
-    if ssh_preset:
-        ssh_note = "SSH 已预置为端口 2222，会随 KOReader 启动，并允许无密码登录。"
-    else:
-        ssh_note = "SSH 没能写入配置，稍后需要在 KOReader 里手动开启。"
+    write_state(
+        cache,
+        koreader_arch=args.arch,
+        koreader_release=release.get("tag_name"),
+        ssh_autostart=False,
+    )
     return {
         "ok": True,
         "command": "install-koreader",
@@ -2400,10 +2395,10 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
         "arch": args.arch,
         "release": release.get("tag_name"),
         "copied_files": copied,
-        "ssh_preset": ssh_preset,
-        "ssh_error": ssh_error,
+        "ssh_autostart": False,
         "message": (
-            f"KOReader {release.get('tag_name')}（{args.arch}）已写入 Kindle。{ssh_note}"
+            f"KOReader {release.get('tag_name')}（{args.arch}）已写入 Kindle。"
+            "SSH 不会随 KOReader 启动。需要无线操作时，再在 KOReader 里临时打开 SSH。"
             "先不要弹出。接下来会装上微信读书和新主页。"
         ),
     }
@@ -2653,7 +2648,7 @@ def cmd_finalize(args: argparse.Namespace) -> dict:
         plugins = []
     plugin_names = [str(item) for item in plugins]
     home = state.get("simpleui_ready") is True
-    if state.get("deploy_mode") == "wifi" and kindle is None:
+    if state.get("deploy_mode") == "wifi":
         message = wifi_done_message(plugin_names, home=home)
     else:
         message = login_hint(plugin_names, home=home)
@@ -2753,17 +2748,16 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
 
         ssh_root = root / "ssh-kindle"
         (ssh_root / "koreader").mkdir(parents=True)
-        preset_koreader_ssh(ssh_root)
+        disable_koreader_ssh_autostart(ssh_root)
         ssh_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
-        check('["SSH_port"] = "2222"' in ssh_text, "ssh port preset")
-        check('["SSH_allow_no_password"] = true' in ssh_text, "ssh no password")
-        check('["SSH_autostart"] = true' in ssh_text, "ssh autostart")
-        check('["SSH_key_only_auth"] = false' in ssh_text, "ssh key auth off")
+        check('["SSH_autostart"] = false' in ssh_text, "ssh autostart off")
+        check("SSH_allow_no_password" not in ssh_text, "install does not enable passwordless ssh")
+        check("SSH_port" not in ssh_text, "install does not preset ssh port")
         preset_simpleui_launch(ssh_root)
         launch_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
         check('["start_with"] = "homescreen_simpleui"' in launch_text, "start with simpleui")
         check('["home_dir"] = "/mnt/us/documents"' in launch_text, "default documents home")
-        check('["SSH_port"] = "2222"' in launch_text, "launch preset keeps ssh")
+        check('["SSH_autostart"] = false' in launch_text, "launch preset keeps ssh off")
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
             'return {\n    ["home_dir"] = "/mnt/us/documents/Books",\n    ["start_with"] = "filemanager",\n}\n',
             encoding="utf-8",
@@ -2780,13 +2774,24 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(not seed_simpleui_skip_onboarding(ssh_root), "do not reseed onboarding")
         check(seeded.read_bytes() == seeded_bytes, "reseed leaves settings")
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
-            'return {\n    ["font"] = "Droid",\n    ["SSH_port"] = "22",\n}\n',
+            'return {\n    ["font"] = "Droid",\n    ["SSH_autostart"] = true,\n    ["SSH_port"] = "2222",\n}\n',
             encoding="utf-8",
         )
-        preset_koreader_ssh(ssh_root)
+        disable_koreader_ssh_autostart(ssh_root)
         ssh_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
-        check('["font"] = "Droid"' in ssh_text, "ssh preset keeps settings")
-        check('["SSH_port"] = "2222"' in ssh_text, "ssh preset updates port")
+        check('["font"] = "Droid"' in ssh_text, "ssh disable keeps settings")
+        check('["SSH_autostart"] = false' in ssh_text, "ssh autostart cleared")
+        check('["SSH_port"] = "2222"' in ssh_text, "ssh disable leaves port")
+        check('["SSH_autostart"] = true' not in ssh_text, "ssh autostart true removed")
+        helper_source = Path(__file__).read_text(encoding="utf-8")
+        forbidden_autostart = '"SSH_autostart"' + ': "true"'
+        check(forbidden_autostart not in helper_source, "source never sets ssh autostart")
+        check("取消勾选" in ssh_enable_message(), "ssh enable says turn off later")
+        check("取消勾选" in open_home_message(wifi=True), "wifi home says turn ssh off")
+        check("取消勾选" not in open_home_message(wifi=False), "usb home leaves ssh note out")
+        check("取消勾选" in wifi_done_message(["miuread"]), "wifi done says turn ssh off")
+        check("取消勾选" in simpleui_message("v1", False, wifi=True), "simpleui wifi says turn ssh off")
+        check("取消勾选" not in simpleui_message("v1", False, wifi=False), "simpleui usb leaves ssh note out")
         check(is_lan_ip("192.168.1.20") and is_lan_ip("10.0.0.2"), "lan ip")
         check(not is_lan_ip("8.8.8.8") and not is_lan_ip("127.0.0.1"), "reject public and loopback")
         check(str(scan_network("10.1.2.3", 8)) == "10.1.2.0/24", "collapse large subnet")

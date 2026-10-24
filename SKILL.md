@@ -6,10 +6,11 @@ description: >-
   and Qiaomu SimpleUI as the home screen. Once the Kindle is connected, the
   computer-side install runs straight through. The first KOReader launch opens
   SimpleUI and asks the user to scan a WeChat QR code on the Kindle. An
-  existing SimpleUI install is left in place. Can install over Wi-Fi with
-  KOReader SSH on port 2222 when the device is already on the same LAN. Use
-  when the user mentions Kindle, KOReader, KUAL, WinterBreak, LanguageBreak,
-  SSH, Wi-Fi, SimpleUI, 越狱, 微信读书, 主页, weread.koplugin, or simpleui.
+  existing SimpleUI install is left in place. Wi-Fi install works when the
+  user temporarily turns on KOReader SSH on port 2222; the install does not
+  leave SSH auto-starting, and the user turns it off afterwards. Use when the
+  user mentions Kindle, KOReader, KUAL, WinterBreak, LanguageBreak, SSH, Wi-Fi,
+  SimpleUI, 越狱, 微信读书, 主页, weread.koplugin, or simpleui.
 ---
 
 # Kindle 改装向导
@@ -57,8 +58,9 @@ python scripts/kindle_helper.py scan-wifi --json
 
 `detect` 找不到磁盘时退出码是 2，这不表示失败。继续看 `scan-wifi`。
 
-- 状态 B：`scan-wifi` 的 `kindle_ip` 有值，或 USB 上 `koreader_present` 为真且用户明确说 Kindle 已连上同一个 Wi-Fi。跳过插拔数据线，直接进入阶段 5 的无线安装。若已经扫到 IP，不要再叫用户插 USB。
-- 状态 B 但没扫到端口：KOReader 已装好，只说一句，让用户打开 KOReader，进入顶部菜单 → 网络 → SSH 服务器，勾选 SSH 服务器和允许无密码登录。用户回复「SSH 已开」后重新运行 `scan-wifi`。
+- 状态 B：`scan-wifi` 的 `kindle_ip` 有值，或 USB 上 `koreader_present` 为真且用户明确说 Kindle 已连上同一个 Wi-Fi。跳过插拔数据线，直接进入阶段 5 的无线安装。若已经扫到 IP，不要再叫用户插 USB。无线命令连接用户已经手动打开的 2222 端口，可以完成安装。不要改 `settings.reader.lua`，也不要把 `SSH_autostart` 写成 true。
+- 状态 B 但没扫到端口：KOReader 已装好。只说一句，让用户临时打开 SSH：打开 KOReader，进入顶部菜单 → 网络 → SSH 服务器，勾选 SSH 服务器和允许无密码登录。用户回复「SSH 已开」后重新运行 `scan-wifi`。
+- 无线安装、`wifi-install-simpleui`，或把改过的 SimpleUI 写回设备之后，告诉用户回到同一菜单，取消勾选 SSH 服务器。安装不会让 SSH 随 KOReader 启动，也不要另写一份配置把它重新打开。
 - 状态 A：USB 上已经找到 Kindle，但 `koreader_present` 为假，并且没有扫到 2222；或者用户明确说还没装 KOReader。告诉用户：因为亚马逊原厂限制，第一次越狱和写入 KOReader 必须用一次 USB。然后请用户打开飞行模式并连上数据线，回复「已连接」。固件 `>= 5.18.1` 时不要先开飞行模式，这种机器要先联网下载锁屏广告，走 AdBreak。
 - 两个探测都没有结果，而且用户还没说明设备状态时，只问：已经装好 KOReader，并且和电脑在同一个 Wi-Fi 吗？不要同时讲解两套流程。
 
@@ -135,7 +137,7 @@ python scripts/kindle_helper.py install-koreader --arch kindlepw2 --json
 python scripts/kindle_helper.py install-koreader --arch kindlehf --json
 ```
 
-USB 安装会预置 KOReader 的 SSH：端口 2222、随 KOReader 启动、允许无密码登录。这次数据线还插着，插件继续走 USB，不要中途改成无线。
+USB 安装会把 `SSH_autostart` 写成 false。SSH 不会随 KOReader 启动，也不会预置无密码登录。这次数据线还插着，插件继续走 USB，不要中途改成无线。
 
 ## 阶段 5：微信读书插件和新主页
 
@@ -155,7 +157,7 @@ python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice we
 
 这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`，下一次完全退出再打开时生效。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
 
-端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。成功后不要停在这条 `message`，继续 `finalize`。
+端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。用户在 KOReader 里手动打开 SSH 之后，这条命令仍通过 2222 安装。成功后不要停在这条 `message`，继续 `finalize`。`finalize` 会要求用户取消勾选 SSH 服务器。不要把 `SSH_autostart` 写成 true。
 
 脚本会把目录名固定成 `weread.koplugin`，并要求里面有 `main.lua`。无线传输只接受局域网私有地址。
 
@@ -180,14 +182,14 @@ python scripts/kindle_helper.py install-simpleui --json
 python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --json
 ```
 
-改界面时，改电脑上的 `simpleui.koplugin` 副本，不要改 Kindle 盘里的文件，也不要改 `koreader/settings/simpleui`。KOReader 开着时 SSH 可用，但那份设置不要写。一次只改用户刚说的那一处，然后写回：
+改界面时，改电脑上的 `simpleui.koplugin` 副本，不要改 Kindle 盘里的文件，也不要改 `koreader/settings/simpleui`。KOReader 开着时，让用户临时打开 SSH，写回命令才能连上；不要改正在运行的 `settings.reader.lua`，也不要把 `SSH_autostart` 写成 true。一次只改用户刚说的那一处，然后写回：
 
 ```bash
 python scripts/kindle_helper.py install-simpleui --source <目录> --json
 python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source <目录> --json
 ```
 
-`<目录>` 可以是 `simpleui.koplugin` 本身，或直接包含它的目录。安装结果里的 `source_path` 是刚解压的副本，`finalize` 清缓存后就没了。把返回的 `message` 发给用户，让对方完全退出并重新打开 KOReader。不要把插件源码提交进本仓库。`finalize` 在初次安装时已经运行过，改界面时不必再运行。
+`<目录>` 可以是 `simpleui.koplugin` 本身，或直接包含它的目录。安装结果里的 `source_path` 是刚解压的副本，`finalize` 清缓存后就没了。把返回的 `message` 发给用户。无线写回的 `message` 会要求完全退出并重新打开 KOReader，然后取消勾选 SSH 服务器。不要把插件源码提交进本仓库。`finalize` 在初次安装时已经运行过，改界面时不必再运行。
 
 ## 异常时只说原因和下一步
 
@@ -198,9 +200,9 @@ python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --source 
 - 架构冲突：不要加 `--force`，除非用户看过固件版本后明确要求。
 - AdBreak 找不到 `.assets`：让用户先联网下载广告，打开 View all ads，再开飞行模式并重连。
 - 需要还原 AdBreak 改过的广告文件：`python scripts/kindle_helper.py restore-assets --json`。
-- 扫不到 2222：只让用户在 KOReader 里打开 SSH 和无密码登录，不要同时改讲 USB 越狱。
+- 扫不到 2222：只让用户在 KOReader 里临时打开 SSH 和无密码登录，不要同时改讲 USB 越狱。做完后让用户取消勾选 SSH 服务器。
 - 找到多台设备：把 IP 列出来，等用户选定后再传 `--ip`。
-- 无线登录失败：不要换端口或猜测密码。仍旧只让用户勾选允许无密码登录。
+- 无线登录失败：不要换端口或猜测密码。仍旧只让用户勾选允许无密码登录。连上并做完之后，让用户取消勾选 SSH 服务器。
 
 ## 命令
 
