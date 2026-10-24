@@ -3,7 +3,7 @@
 把这句话发给你的 Agent：
 
 ```text
-安装这个 Skill https://github.com/LiamZJU/kindle-weread-skill ，让他来帮你给 Kindle 装上 KOReader、微信读书插件和乔木 SimpleUI。
+安装这个 Skill https://github.com/LiamZJU/kindle-weread-skill，帮我的 Kindle 装上 KOReader、微信读书插件和乔木 Simple UI
 ```
 
 用 Claude Code、Codex 或 Cursor 和你一起，把**自己的** Kindle 装上开源阅读器 [KOReader](https://github.com/koreader/koreader)、社区微信读书插件，以及默认的乔木 SimpleUI 主页。界面不满意，就让助手改这份插件再写回 Kindle。
