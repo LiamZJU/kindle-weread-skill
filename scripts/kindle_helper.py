@@ -1451,7 +1451,13 @@ def prefix_from_mask(mask: str) -> int:
 
 
 def decode_console(raw: bytes) -> str:
-    encodings = ["oem", "mbcs", "gbk", "utf-8"] if os.name == "nt" else ["utf-8"]
+    """Pick the decoding that yields the most ipconfig addresses.
+
+    Chinese Windows prints ipconfig in GBK/OEM. The GBK codec is in the
+    standard library on Linux and macOS too; trying it only when os.name is
+    nt made the self-check fail on those systems.
+    """
+    encodings = ["oem", "mbcs", "gbk", "utf-8"]
     best = raw.decode("utf-8", errors="replace")
     best_score = len(parse_ipconfig(best))
     for encoding in encodings:
@@ -3083,7 +3089,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
 def main(argv: Sequence[str] | None = None) -> None:
+    _force_utf8_stdio()
     if sys.version_info < (3, 9):
         sys.stderr.write("需要 Python 3.9 或更高版本。\n")
         raise SystemExit(1)

@@ -26,7 +26,7 @@
 - argparse 的公共参数要挂在每个子命令上。`detect --json` 才是文档里的写法；写在子命令前面不会被识别。
 - 安装 KOReader 后 SSH 不能自启动。只把 `koreader/settings.reader.lua` 里的 `SSH_autostart` 写成 false，不要写成 true，也不要预置无密码登录。需要 `scan-wifi`、`wifi-install-plugin`、`wifi-install-simpleui` 或写回 SimpleUI 时，让用户在 KOReader 里临时打开：顶部菜单 → 网络 → SSH 服务器，勾选 SSH 服务器和允许无密码登录。用户手动打开后，无线命令仍连接端口 2222。做完后让用户取消勾选 SSH 服务器。无线安装期间不要改正在运行的 `settings.reader.lua`。
 - 无线插件目录是 `/mnt/us/koreader/plugins/weread.koplugin` 或 `miuread.koplugin`。只连接局域网私有 IPv4。网段大于 /24 时只扫本机所在的 /24，端口固定为 2222。
-- 中文 Windows 的 `ipconfig` 是 GBK/OEM 编码。按 UTF-8 硬解会丢掉「子网掩码」，扫描会退到错误网段。WSL 的 `vEthernet` 不要扫，Kindle 在家里的 Wi-Fi 网段上。
+- 中文 Windows 的 `ipconfig` 是 GBK/OEM 编码。`decode_console` 在 Linux、macOS 和 Windows 上都要尝试 gbk；只在 Windows 上试会让 `self-check` 的 `parse gbk ipconfig` 失败。按 UTF-8 硬解会丢掉「子网掩码」，扫描会退到错误网段。WSL 的 `vEthernet` 不要扫，Kindle 在家里的 Wi-Fi 网段上。
 - 枚举盘符前要关掉 Windows 的“请插入磁盘”对话框，并跳过 A:、B: 和光驱。Kindle 只认带 `system` 与 `documents` 的可移动盘或第二块固定盘。
 - WinterBreak2 v1.1.0 的 `wb2.zip` 只有 `winterbreak2/dialoger.html`。成功标志是 `documents/JAILBROKEN.txt`（jb.sh v2.2.1，正文是 Winterbreak2 Jailbreak）以及 `libkh/bin/fbink`。这时 `detect` 的 `jailbroken` 仍是 false，因为还没有 `mkk`。jb.sh v2.2.1 已经拦住 OTA，官方说明可以跳过 Hotfix；「更新您的 Kindle」发灰是正常的。若根目录已有 `Update_hotfix_universal.bin`，用 `clean-ota --include-hotfix` 删掉，然后直接 `install-kual`。只有越狱屏幕明确写了要安装 hotfix 时才写 Hotfix。
 - coplate KUAL 用 `;log mrpi` 装完后，书库里的启动器是 0 字节的 `documents/KUAL.kual`，不是 `KUAL.azw2`。`kual_present` 要认 `.kual`。安装日志在 `extensions/MRInstaller/log/mrinstaller.log`，成功行是 `Success! :)`。日志里 fbink 查设备号出现 Segmentation fault 时，只要后面有 Success 并且 `KUAL.kual` 已生成，就可以继续装 KOReader。
