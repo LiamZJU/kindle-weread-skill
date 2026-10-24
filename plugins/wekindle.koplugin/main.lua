@@ -32,6 +32,19 @@ function WeKindle:homeRequested()
     return lfs.attributes(marker, "mode") == "file"
 end
 
+-- A wireless install must not edit settings.reader.lua while KOReader is running:
+-- exit would write the in-memory copy back over it. Old installs left autostart
+-- on. Clear it on the next launch, even when the home screen was already set.
+function WeKindle:disableSshAutostart()
+    if G_reader_settings:readSetting("SSH_autostart") == false then
+        return
+    end
+    G_reader_settings:saveSetting("SSH_autostart", false)
+    if G_reader_settings.flush then
+        G_reader_settings:flush()
+    end
+end
+
 -- SimpleUI installs its launch patch during its own init. This runs in the
 -- same startup, before FileManager builds the first screen.
 function WeKindle:ensureHome()
@@ -91,6 +104,7 @@ function WeKindle:offerLogin(attempt)
 end
 
 function WeKindle:init()
+    self:disableSshAutostart()
     self:ensureHome()
     if self.ui and self.ui.document then
         return

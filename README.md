@@ -93,8 +93,11 @@ python scripts/kindle_helper.py finalize --json
 
 ```bash
 python scripts/kindle_helper.py install-simpleui --source simpleui.koplugin --json
+python scripts/kindle_helper.py wifi-install-plugin --ip 192.168.1.20 --choice weread --json
 python scripts/kindle_helper.py wifi-install-simpleui --ip 192.168.1.20 --source simpleui.koplugin --json
 ```
+
+SSH 现在默认关闭。运行 `wifi-install-plugin` 或 `wifi-install-simpleui` 之前，要先在 KOReader 里打开顶部菜单 → 网络 → SSH 服务器；用完后再取消勾选。
 
 ### 常用参数
 

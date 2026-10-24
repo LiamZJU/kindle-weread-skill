@@ -8,7 +8,10 @@ description: >-
   SimpleUI and asks the user to scan a WeChat QR code on the Kindle. An
   existing SimpleUI install is left in place. Wi-Fi install works when the
   user temporarily turns on KOReader SSH on port 2222; the install does not
-  leave SSH auto-starting, and the user turns it off afterwards. Use when the
+  leave SSH auto-starting. USB install-plugin and install-simpleui also clear
+  an existing SSH_autostart. A wireless install leaves the running settings
+  file alone and wekindle.koplugin clears autostart on the next launch. The
+  user turns SSH off afterwards. Use when the
   user mentions Kindle, KOReader, KUAL, WinterBreak, LanguageBreak, SSH, Wi-Fi,
   SimpleUI, 越狱, 微信读书, 主页, weread.koplugin, or simpleui.
 ---
@@ -48,7 +51,7 @@ Windows 用 `python`，macOS / Linux 也可以用 `bash scripts/kindle_helper.sh
 请回复「同意」才继续。
 ```
 - 乔木 SimpleUI 是默认主页。`install-plugin` 和 `wifi-install-plugin` 会一并装上，不要先问用户要不要。设备上已经有 `simpleui.koplugin` 时不要覆盖。只有用户明确说不要这个主页时才加 `--no-simpleui`。
-- 安装会把 KOReader 的 `start_with` 写成 `homescreen_simpleui`，并在还没有 `settings/simpleui` 时跳过布局向导。已经有的个人设置不要覆盖。无线安装时不要改正在运行的 `settings.reader.lua`；下一次打开由 `wekindle.koplugin` 写入。
+- 安装会把 KOReader 的 `start_with` 写成 `homescreen_simpleui`，并在还没有 `settings/simpleui` 时跳过布局向导。已经有的个人设置不要覆盖。USB 的 `install-plugin` 和 `install-simpleui` 还会把 `SSH_autostart` 写成 false，包括旧安装留下的 true。无线安装时不要改正在运行的 `settings.reader.lua`；下一次打开由 `wekindle.koplugin` 写入启动项，并把 `SSH_autostart` 写成 false。
 
 ## 状态
 
@@ -67,7 +70,7 @@ python scripts/kindle_helper.py scan-wifi --json
 
 - 状态 B：`scan-wifi` 的 `kindle_ip` 有值，或 USB 上 `koreader_present` 为真且用户明确说 Kindle 已连上同一个 Wi-Fi。跳过插拔数据线，直接进入阶段 5 的无线安装。若已经扫到 IP，不要再叫用户插 USB。无线命令连接用户已经手动打开的 2222 端口，可以完成安装。不要改 `settings.reader.lua`，也不要把 `SSH_autostart` 写成 true。
 - 状态 B 但没扫到端口：KOReader 已装好。只说一句，让用户临时打开 SSH：打开 KOReader，进入顶部菜单 → 网络 → SSH 服务器，勾选 SSH 服务器和允许无密码登录。用户回复「SSH 已开」后重新运行 `scan-wifi`。
-- 无线安装、`wifi-install-simpleui`，或把改过的 SimpleUI 写回设备之后，告诉用户回到同一菜单，取消勾选 SSH 服务器。安装不会让 SSH 随 KOReader 启动，也不要另写一份配置把它重新打开。
+- 无线安装、`wifi-install-simpleui`，或把改过的 SimpleUI 写回设备之后，告诉用户回到同一菜单，取消勾选 SSH 服务器。这些无线命令不改正在运行的 `settings.reader.lua`。下一次完全退出再打开时，`wekindle.koplugin` 会把 `SSH_autostart` 写成 false，旧安装留下的自启动也会关掉。不要另写一份配置把它重新打开。
 - 状态 A：USB 上已经找到 Kindle，但 `koreader_present` 为假，并且没有扫到 2222；或者用户明确说还没装 KOReader。告诉用户：因为亚马逊原厂限制，第一次越狱和写入 KOReader 必须用一次 USB。然后请用户打开飞行模式并连上数据线，回复「已连接」。固件 `>= 5.18.1` 时不要先开飞行模式，这种机器要先联网下载锁屏广告，走 AdBreak。
 - 两个探测都没有结果，而且用户还没说明设备状态时，只问：已经装好 KOReader，并且和电脑在同一个 Wi-Fi 吗？不要同时讲解两套流程。
 
@@ -144,7 +147,7 @@ python scripts/kindle_helper.py install-koreader --arch kindlepw2 --json
 python scripts/kindle_helper.py install-koreader --arch kindlehf --json
 ```
 
-USB 安装会把 `SSH_autostart` 写成 false。SSH 不会随 KOReader 启动，也不会预置无密码登录。这次数据线还插着，插件继续走 USB，不要中途改成无线。
+USB 安装会把 `SSH_autostart` 写成 false。SSH 不会随 KOReader 启动，也不会预置无密码登录。已经装过旧版本、设置里仍是 true 的设备，后面的 USB `install-plugin` 或 `install-simpleui` 会再写成 false。这次数据线还插着，插件继续走 USB，不要中途改成无线。
 
 ## 阶段 5：微信读书插件和新主页
 
@@ -162,7 +165,7 @@ python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice we
 
 用户明确说要觅阅时，才把 `--choice` 换成 `miuread` 或 `both`。同一条命令默认再安装乔木 SimpleUI。设备上已经有 `simpleui.koplugin` 时不会覆盖它。用户明确说不要这个主页时，才加 `--no-simpleui`。
 
-这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`，下一次完全退出再打开时生效。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
+这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`，并把 `SSH_autostart` 写成 false；旧版本留下的 true 也会改掉。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`。下一次完全退出再打开时，它写入启动项，并把 `SSH_autostart` 写成 false。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
 
 端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。用户在 KOReader 里手动打开 SSH 之后，这条命令仍通过 2222 安装。成功后不要停在这条 `message`，继续 `finalize`。`finalize` 会要求用户取消勾选 SSH 服务器。不要把 `SSH_autostart` 写成 true。
 
@@ -189,7 +192,7 @@ python scripts/kindle_helper.py install-simpleui --json
 python scripts/kindle_helper.py wifi-install-simpleui --ip <Kindle_IP> --json
 ```
 
-改界面时，改电脑上的 `simpleui.koplugin` 副本，不要改 Kindle 盘里的文件，也不要改 `koreader/settings/simpleui`。KOReader 开着时，让用户临时打开 SSH，写回命令才能连上；不要改正在运行的 `settings.reader.lua`，也不要把 `SSH_autostart` 写成 true。一次只改用户刚说的那一处，然后写回：
+改界面时，改电脑上的 `simpleui.koplugin` 副本，不要改 Kindle 盘里的文件，也不要改 `koreader/settings/simpleui`。KOReader 开着时，让用户临时打开 SSH，写回命令才能连上。USB 写回会把 `SSH_autostart` 写成 false。无线写回不要改正在运行的 `settings.reader.lua`，也不要把 `SSH_autostart` 写成 true；下一次打开时 `wekindle.koplugin` 把它写成 false。一次只改用户刚说的那一处，然后写回：
 
 ```bash
 python scripts/kindle_helper.py install-simpleui --source <目录> --json

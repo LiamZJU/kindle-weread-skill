@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import inspect
 import io
 import ipaddress
 import json
@@ -1300,6 +1301,7 @@ def install_simpleui_usb(kindle: Path, cache: Path, source: Path, label: str) ->
         sync_kindle(kindle)
         raise SafetyError("安装碰到了 settings/simpleui，已撤回插件并写回原来的设置。")
     prepare_home_usb(kindle)
+    clear_usb_ssh_autostart(kindle)
     backup_text = None if backup is None else str(backup)
     write_state(cache, simpleui_release=label, simpleui_backup=backup_text)
     return {
@@ -1365,6 +1367,12 @@ def disable_koreader_ssh_autostart(kindle: Path) -> None:
     )
 
 
+def clear_usb_ssh_autostart(kindle: Path) -> None:
+    """Turn off SSH autostart on a USB install, including a file left true by an older install."""
+    disable_koreader_ssh_autostart(kindle)
+    sync_kindle(kindle)
+
+
 def preset_simpleui_launch(kindle: Path) -> None:
     """Make the next KOReader launch open SimpleUI, without touching an existing home folder."""
     directory = kindle / "koreader"
@@ -1399,6 +1407,12 @@ def wekindle_source() -> Path:
 
 def deploy_wekindle_usb(kindle: Path) -> Path:
     return deploy_plugin(kindle, wekindle_source(), WEKINDLE_DIR)
+
+
+def deploy_wekindle_wifi(ip: str, port: int, cache: Path) -> str:
+    """Copy the guide plugin. It clears SSH autostart on the next launch, not over the live settings file."""
+    staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
+    return upload_plugin(staged, ip, port, cache)
 
 
 def prepare_home_usb(kindle: Path) -> None:
@@ -2109,8 +2123,7 @@ def prepare_home_wifi(ip: str, port: int, cache: Path) -> None:
         port,
         cache,
         "if test -f /mnt/us/koreader/settings/simpleui/sui_settings.lua; then echo SUI_PRESENT; "
-        "else echo SUI_ABSENT; fi; "
-        "if test -f /mnt/us/koreader/plugins/weread.koplugin/main.lua; then echo WEREAD_PRESENT; fi",
+        "else echo SUI_ABSENT; fi",
     )
     if has_line(text, "SUI_ABSENT") and not has_line(text, "SUI_PRESENT"):
         remote_shell(ip, port, cache, "mkdir -p /mnt/us/koreader/settings/simpleui && echo DIR_OK")
@@ -2119,9 +2132,7 @@ def prepare_home_wifi(ip: str, port: int, cache: Path) -> None:
         local.write_text(ONBOARDING_SKIP_LUA, encoding="utf-8", newline="\n")
         upload_remote_sui_settings(ip, port, cache, local)
         remote_shell(ip, port, cache, "sync")
-    if has_line(text, "WEREAD_PRESENT"):
-        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
-        upload_plugin(staged, ip, port, cache)
+    deploy_wekindle_wifi(ip, port, cache)
 
 
 def ssh_enable_message(ip: str | None = None) -> str:
@@ -2456,6 +2467,7 @@ def cmd_install_plugin(args: argparse.Namespace) -> dict:
     elif "weread" in choices:
         deploy_wekindle_usb(kindle)
         sync_kindle(kindle)
+    clear_usb_ssh_autostart(kindle)
     home_ready = not skipped and not simpleui_error and simpleui_installed_on(kindle)
     write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
@@ -2545,9 +2557,8 @@ def cmd_wifi_install_plugin(args: argparse.Namespace) -> dict:
     simpleui, simpleui_error, already = attach_default_simpleui_wifi(ip, port, cache, args.mirror, bool(args.no_simpleui))
     if not args.no_simpleui and (simpleui is not None or already):
         prepare_home_wifi(ip, port, cache)
-    elif "weread" in choices:
-        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
-        upload_plugin(staged, ip, port, cache)
+    else:
+        deploy_wekindle_wifi(ip, port, cache)
     home_ready = not args.no_simpleui and not simpleui_error and (simpleui is not None or already)
     write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
@@ -2812,6 +2823,31 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check('["SSH_autostart"] = false' in ssh_text, "ssh autostart cleared")
         check('["SSH_port"] = "2222"' in ssh_text, "ssh disable leaves port")
         check('["SSH_autostart"] = true' not in ssh_text, "ssh autostart true removed")
+        legacy = root / "legacy-plugin-kindle"
+        (legacy / "koreader").mkdir(parents=True)
+        (legacy / "koreader" / "settings.reader.lua").write_text(
+            'return {\n    ["SSH_autostart"] = true,\n    ["SSH_allow_no_password"] = true,\n    ["SSH_port"] = "2222",\n}\n',
+            encoding="utf-8",
+        )
+        clear_usb_ssh_autostart(legacy)
+        legacy_text = (legacy / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
+        check('["SSH_autostart"] = false' in legacy_text, "plugin usb clears old ssh autostart")
+        check('["SSH_autostart"] = true' not in legacy_text, "plugin usb removes ssh autostart true")
+        check('["SSH_allow_no_password"] = true' in legacy_text, "plugin usb leaves other ssh flags")
+        check('["SSH_port"] = "2222"' in legacy_text, "plugin usb leaves ssh port")
+        check(
+            "clear_usb_ssh_autostart(kindle)" in inspect.getsource(cmd_install_plugin),
+            "install-plugin clears old ssh",
+        )
+        check(
+            "clear_usb_ssh_autostart(kindle)" in inspect.getsource(install_simpleui_usb),
+            "install-simpleui clears old ssh",
+        )
+        for wifi_command in (cmd_wifi_install_plugin, install_simpleui_wifi, prepare_home_wifi):
+            check(
+                "clear_usb_ssh_autostart" not in inspect.getsource(wifi_command),
+                "wifi install leaves the running settings file",
+            )
         helper_source = Path(__file__).read_text(encoding="utf-8")
         forbidden_autostart = '"SSH_autostart"' + ': "true"'
         check(forbidden_autostart not in helper_source, "source never sets ssh autostart")
@@ -2857,6 +2893,12 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(remote_plugin_dir(WEKINDLE_DIR).endswith("/wekindle.koplugin"), "wekindle remote dir")
         guide = (wekindle_source() / "main.lua").read_text(encoding="utf-8")
         check("homescreen_simpleui" in guide and "qr_login" in guide, "login guide plugin")
+        check('saveSetting("SSH_autostart", false)' in guide, "wekindle clears ssh on next launch")
+        check('saveSetting("SSH_autostart", true)' not in guide, "wekindle never enables ssh autostart")
+        init_body = guide.split("function WeKindle:init()", 1)[1]
+        check("self:disableSshAutostart()" in init_body, "wekindle init disables ssh")
+        ensure_body = guide.split("function WeKindle:ensureHome()", 1)[1].split("function WeKindle:", 1)[0]
+        check("SSH_autostart" not in ensure_body, "ssh off is not skipped with start_with")
         chosen, chosen_asset = select_release(
             [
                 {"draft": True, "tag_name": "draft", "assets": [{"name": SIMPLEUI_ASSET}]},
@@ -2976,6 +3018,11 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
             (source / "_meta.lua").write_text('version = "3.0.0-qiaomu.3"\n', encoding="utf-8")
             (source / "sui_settings.lua").write_text("do-not-copy-to-settings", encoding="utf-8")
             check(resolve_simpleui_source(str(source.parent)) == source.resolve(), "resolve parent source")
+            (device / "koreader" / "settings.reader.lua").write_text(
+                'return {\n    ["font"] = "Droid",\n    ["SSH_autostart"] = true,\n'
+                '    ["SSH_allow_no_password"] = true,\n    ["SSH_port"] = "2222",\n}\n',
+                encoding="utf-8",
+            )
             result = install_simpleui_usb(device, root / "simpleui-cache", source, "v3.0.0-qiaomu.3")
         check((device_plugins / SIMPLEUI_DIR / "main.lua").read_text(encoding="utf-8") == "new-ui", "simpleui replaced")
         check(settings.read_bytes() == b"return { keep = true }\n", "simpleui settings preserved")
@@ -2986,6 +3033,10 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check("新主页" in str(result["message"]), "simpleui message opens home")
         reader = (device / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
         check('["start_with"] = "homescreen_simpleui"' in reader, "install sets start_with")
+        check('["SSH_autostart"] = false' in reader, "usb simpleui clears old ssh autostart")
+        check('["SSH_autostart"] = true' not in reader, "usb simpleui removes ssh autostart true")
+        check('["font"] = "Droid"' in reader, "usb simpleui keeps reader settings")
+        check('["SSH_port"] = "2222"' in reader, "usb simpleui leaves ssh port")
         check((device / "koreader" / "wekindle_home").is_file(), "home marker")
         (device_plugins / "weread.koplugin").mkdir()
         (device_plugins / "weread.koplugin" / "main.lua").write_text("return {}", encoding="utf-8")
