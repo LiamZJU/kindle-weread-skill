@@ -87,10 +87,10 @@
       "sha256": "aadd7d2785a18c2e66580f196363285525535d19c0182998a6e6f1700a35fc0f"
     },
     "simpleui": {
-      "version": "v3.0.0-qiaomu.3",
+      "version": "v3.0.0-qiaomu.15",
       "filename": "simpleui.koplugin.zip",
-      "url": "https://github.com/joeseesun/qiaomu-simpleui/releases/download/v3.0.0-qiaomu.3/simpleui.koplugin.zip",
-      "sha256": "b510d7552f2aeeb1b39a0c8b9ccdcc673bdec7bc22ed7d0204eeb9e30d3c8c38"
+      "url": "https://github.com/joeseesun/qiaomu-simpleui/releases/download/v3.0.0-qiaomu.15/simpleui.koplugin.zip",
+      "sha256": "705387b5535275dbb6b5e6fa7cf7a02c57b192215b2349a9f28dd64b2a0f52fa"
     }
   }
 }
