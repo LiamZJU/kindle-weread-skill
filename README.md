@@ -120,6 +120,8 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 
 已验证的只有这一台：Paperwhite 第 7 代 KP3，序列号前缀 `G090`，固件 `5.16.2.1.1`。表里其余行都是未验证。
 
+v0.1 只在一台真实的 Kindle Paperwhite 3（KP3）上验证过。其他型号和固件尚未测试，可能需要另一条越狱路线。请开一个 issue 反馈结果。
+
 ## 怎样算安装完成
 
 下面三件事都发生，才算安装完成：
@@ -172,7 +174,7 @@ Kindle 没有官方微信读书 App。上游 [weread.koplugin](https://github.co
 
 ### 一定要越狱吗？
 
-在 Kindle 上安装 KOReader 的前提是设备已经越狱，这个 Skill 就按固件走 WinterBreak 或 AdBreak。Kobo 的官方安装是把安装包拷进设备，Android 是安装 APK；本仓库只处理 Kindle。
+在 Kindle 上安装 KOReader 的前提是设备已经越狱，这个 Skill 就按固件走 WinterBreak 或 AdBreak。本仓库只处理 Kindle。
 
 ### 越狱会删书、影响保修吗？
 
@@ -204,4 +206,4 @@ Kindle 没有官方微信读书 App。上游 [weread.koplugin](https://github.co
 
 ## In English
 
-This skill walks Claude Code, Codex, or Cursor through jailbreaking your own Kindle, then installing KUAL, KOReader, the community WeRead plugin (weread.koplugin), and Qiaomu SimpleUI as the home screen. The only device verified here is a Kindle Paperwhite 7th generation (KP3), serial prefix G090, firmware 5.16.2.1.1. Jailbreaking voids the Amazon warranty and can leave the device unable to boot; read 「开始前」 before continuing. The first KOReader launch opens SimpleUI and shows a WeChat login QR code.
+This skill walks Claude Code, Codex, or Cursor through jailbreaking your own Kindle, then installing KUAL, KOReader, the community WeRead plugin (weread.koplugin), and Qiaomu SimpleUI as the home screen. v0.1 has only been verified on a real Kindle Paperwhite 3 (KP3), serial prefix G090, firmware 5.16.2.1.1. Other models and firmware are untested and may need a different jailbreak route; please open an issue to report results. Jailbreaking voids the Amazon warranty and can leave the device unable to boot; read 「开始前」 before continuing. The first KOReader launch opens SimpleUI and shows a WeChat login QR code.
