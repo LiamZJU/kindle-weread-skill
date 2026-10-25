@@ -1,4 +1,4 @@
-# kindle-weread-skill：用 AI Agent 在 Kindle 上看微信读书
+# kindle-weread-skill：在 Kindle 上用现代界面看功能完整的微信读书
 
 Kindle 本身不能装微信读书 App。这个 Skill 让 Claude Code、Codex 或 Cursor 帮你越狱 Kindle，装上 KOReader 和社区微信读书插件（weread.koplugin）。
 
