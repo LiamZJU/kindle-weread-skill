@@ -88,7 +88,7 @@ USB 连上后先运行 `detect` 和 `clean-ota`，再按设备现状往下走。
 2. 对方回复「已重启」并重新连上后，再按阶段 2 判断要不要 Hotfix。需要的话运行 `install-hotfix` 并停。不需要就继续。
 3. 还没有 KUAL：运行 `install-kual`。`already_present` 就继续；否则把 `message` 交给用户，停，等 `;log mrpi` 做完并重新连上。
 4. 还没有 KOReader：按架构运行 `install-koreader`。成功后不要把这条 `message` 念给用户，直接装插件。
-5. 运行 `install-plugin --choice weread`。状态 B 改为 `wifi-install-plugin --ip <Kindle_IP> --choice weread`。不要问 A 还是 B。这条命令会装上乔木 SimpleUI，并让下一次打开直接进入新主页。
+5. 运行 `install-plugin --choice weread`。状态 B 改为 `wifi-install-plugin --ip <Kindle_IP> --choice weread`。不要问 A 还是 B。这条命令会装上乔木 SimpleUI，并让下一次打开直接进入新主页。写入前会给 v1.6.0 的扫码登录补上三处：先请求 `https://weread.qq.com/` 拿到 `wr_gid`；等界面停稳再显示二维码，避免 Kindle 只画出半张；轮询收到 `HTTP 401` 时先留着二维码继续等。不要改 pin，也不要降级。
 6. 成功后立刻运行 `finalize`。只把 `finalize` 的 `message` 告诉用户。
 
 某一步失败时，只说 `error` 和下一步，不要继续假装已经装完。`simpleui_error` 有内容时，只说明微信读书插件已装好、主页没装上，以及错误原文。
@@ -165,7 +165,7 @@ python scripts/kindle_helper.py wifi-install-plugin --ip <Kindle_IP> --choice we
 
 用户明确说要觅阅时，才把 `--choice` 换成 `miuread` 或 `both`。同一条命令默认再安装乔木 SimpleUI。设备上已经有 `simpleui.koplugin` 时不会覆盖它。用户明确说不要这个主页时，才加 `--no-simpleui`。
 
-这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`，并把 `SSH_autostart` 写成 false；旧版本留下的 true 也会改掉。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`。下一次完全退出再打开时，它写入启动项，并把 `SSH_autostart` 写成 false。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
+这条命令还会写入启动主页。USB 上直接改 `settings.reader.lua` 的 `start_with`，把 `quickstart_shown_version` 写成已看过，避免第一次打开变成 KOReader 的「快速入门指南」，并把 `SSH_autostart` 写成 false；旧版本留下的 true 也会改掉。无线时 KOReader 还开着，不改这份正在使用的设置，只留下 `wekindle.koplugin`。下一次完全退出再打开时，它写入启动项，并把 `SSH_autostart` 写成 false。还没有 `settings/simpleui` 时会跳过布局选择。已经有的个人设置保持原样。
 
 端口没开时，把返回的 `message` 原样告诉用户，等对方回复「SSH 已开」后再运行同一条命令。用户在 KOReader 里手动打开 SSH 之后，这条命令仍通过 2222 安装。成功后不要停在这条 `message`，继续 `finalize`。`finalize` 会要求用户取消勾选 SSH 服务器。不要把 `SSH_autostart` 写成 true。
 

@@ -103,10 +103,19 @@ function WeKindle:offerLogin(attempt)
     })
 end
 
+function WeKindle:isQuickstartDocument()
+    local document = self.ui and self.ui.document
+    if not document then
+        return false
+    end
+    local path = document.file or document.filepath
+    return type(path) == "string" and path:find("quickstart-", 1, true) ~= nil
+end
+
 function WeKindle:init()
     self:disableSshAutostart()
     self:ensureHome()
-    if self.ui and self.ui.document then
+    if self.ui and self.ui.document and not self:isQuickstartDocument() then
         return
     end
     UIManager:scheduleIn(1.5, function()

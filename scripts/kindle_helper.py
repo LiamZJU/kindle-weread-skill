@@ -102,6 +102,9 @@ return {
 }
 """
 SIMPLEUI_MIN_KOREADER = "2026.03"
+# reader.lua opens the quickstart guide and ignores start_with until this is set.
+# 202607010000 is KOReader v2026.07.1; the guide stays hidden at or above 2021070000.
+KOREADER_QUICKSTART_SHOWN = "202607010000"
 REMOTE_SUI_SETTINGS = "/mnt/us/koreader/settings/simpleui/sui_settings.lua"
 
 
@@ -1076,11 +1079,118 @@ def plugin_choices(choice: str) -> list[str]:
     return [choice]
 
 
+WEREAD_LOGIN_MARKER = "wekindle: homepage sets wr_gid"
+
+
+def _replace_once(text: str, old: str, new: str, *, marker: str, required_anchor: str, error: str) -> str:
+    if marker in text:
+        return text
+    if old not in text:
+        if required_anchor in text:
+            raise SafetyError(error)
+        return text
+    return text.replace(old, new, 1)
+
+
+def patch_weread_qr_login_text(text: str) -> str:
+    """Patch weread v1.6.0 QR login without touching the pinned zip.
+
+    The skills page no longer sets wr_gid, so getLoginInfo answers HTTP 401.
+    The homepage still sets it. Showing the QR immediately also clips it on Kindle.
+    """
+    text = _replace_once(
+        text,
+        (
+            "function QRLogin:_begin_protocol()\n"
+            "    local login_cookies = { wr_fp = self.settings:get_device_fingerprint() }\n"
+            "    local _, page_code, page_headers = self.client:request_follow({\n"
+            "        url = SKILLS_PAGE_URL,"
+        ),
+        (
+            "function QRLogin:_begin_protocol()\n"
+            "    local login_cookies = { wr_fp = self.settings:get_device_fingerprint() }\n"
+            "    -- wekindle: homepage sets wr_gid; /r/weread-skills no longer does\n"
+            "    local _, home_code, home_headers = self.client:request_follow({\n"
+            '        url = BASE_URL .. "/",\n'
+            '        method = "GET",\n'
+            "        skip_cookie = true,\n"
+            "        maxredirects = 5,\n"
+            "        timeout = { 10, 20 },\n"
+            "        headers = {\n"
+            '            ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",\n'
+            '            ["Cookie"] = Cookie.to_header(login_cookies),\n'
+            "        },\n"
+            "    })\n"
+            "    login_cookies = merge_response_cookies(login_cookies, home_headers)\n"
+            "    if not home_code or home_code < 200 or home_code >= 300 then\n"
+            '        error("Unable to open WeRead home (HTTP " .. tostring(home_code) .. ")")\n'
+            "    end\n"
+            '    if type(login_cookies.wr_gid) ~= "string" or login_cookies.wr_gid == "" then\n'
+            '        error("WeRead home did not return wr_gid")\n'
+            "    end\n"
+            "    local _, page_code, page_headers = self.client:request_follow({\n"
+            "        url = SKILLS_PAGE_URL,"
+        ),
+        marker=WEREAD_LOGIN_MARKER,
+        required_anchor="function QRLogin:_begin_protocol()",
+        error="weread 扫码登录补丁对不上 v1.6.0 的 qr_login.lua，已停止。",
+    )
+    text = _replace_once(
+        text,
+        (
+            "    self.qr_dialog = dialog\n"
+            "    UIManager:show(dialog)\n"
+            "    self.host:refreshUI()\n"
+        ),
+        (
+            "    self.qr_dialog = dialog\n"
+            "    -- wekindle: wait until the surrounding UI has finished, or Kindle clips the QR\n"
+            "    UIManager:scheduleIn(0.2, function()\n"
+            "        if generation == self.generation and self.qr_dialog == dialog then\n"
+            "            UIManager:show(dialog)\n"
+            "        end\n"
+            "    end)\n"
+        ),
+        marker="wekindle: wait until the surrounding UI has finished",
+        required_anchor="function QRLogin:_show_qr(",
+        error="weread 二维码显示补丁对不上 v1.6.0 的 qr_login.lua，已停止。",
+    )
+    return _replace_once(
+        text,
+        (
+            "        if is_timeout_error(result) then\n"
+            "            self:_schedule_poll(uid, generation)\n"
+            "            return\n"
+            "        end\n"
+        ),
+        (
+            "        if is_timeout_error(result) or tostring(result):find(\"HTTP 401\", 1, true) then\n"
+            "            -- wekindle: a 401 while the QR is up means this poll was rejected; keep waiting\n"
+            "            self:_schedule_poll(uid, generation)\n"
+            "            return\n"
+            "        end\n"
+        ),
+        marker="wekindle: a 401 while the QR is up",
+        required_anchor="function QRLogin:_poll(",
+        error="weread 扫码轮询补丁对不上 v1.6.0 的 qr_login.lua，已停止。",
+    )
+
+
+def patch_weread_qr_login(source: Path) -> None:
+    path = source / "weread" / "lib" / "qr_login.lua"
+    if not path.is_file():
+        raise SafetyError("weread 插件里没有 weread/lib/qr_login.lua，不能修补扫码登录。")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(patch_weread_qr_login_text(text), encoding="utf-8", newline="\n")
+
+
 def fetch_plugin_source(choice: str, cache: Path, mirror: str | None) -> tuple[str, str, Path]:
     folder_name = PLUGIN_DIRS[choice]
     pin, archive = download_pinned(choice, cache, mirror)
     verify_pinned_file(archive, pin["sha256"], pin["filename"])
     source = plugin_source(fresh_extract(archive, cache), folder_name)
+    if choice == "weread":
+        patch_weread_qr_login(source)
     return folder_name, pin["version"], source
 
 
@@ -1380,7 +1490,10 @@ def preset_simpleui_launch(kindle: Path) -> None:
         raise SafetyError("没有 koreader 目录，不能设置启动主页。")
     path = directory / "settings.reader.lua"
     existing = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-    values = {"start_with": '"homescreen_simpleui"'}
+    values = {
+        "start_with": '"homescreen_simpleui"',
+        "quickstart_shown_version": KOREADER_QUICKSTART_SHOWN,
+    }
     if not _lua_setting_present(existing, "home_dir"):
         values["home_dir"] = '"/mnt/us/documents"'
         if not _lua_setting_present(existing, "lock_home_folder"):
@@ -2790,6 +2903,10 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check('["start_with"] = "homescreen_simpleui"' in launch_text, "start with simpleui")
         check('["home_dir"] = "/mnt/us/documents"' in launch_text, "default documents home")
         check('["SSH_autostart"] = false' in launch_text, "launch preset keeps ssh off")
+        check(
+            '["quickstart_shown_version"] = ' + KOREADER_QUICKSTART_SHOWN in launch_text,
+            "skip koreader quickstart",
+        )
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
             'return {\n    ["home_dir"] = "/mnt/us/documents/Books",\n    ["start_with"] = "filemanager",\n}\n',
             encoding="utf-8",
@@ -2893,6 +3010,30 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(remote_plugin_dir(WEKINDLE_DIR).endswith("/wekindle.koplugin"), "wekindle remote dir")
         guide = (wekindle_source() / "main.lua").read_text(encoding="utf-8")
         check("homescreen_simpleui" in guide and "qr_login" in guide, "login guide plugin")
+        check("quickstart-" in guide and "isQuickstartDocument" in guide, "login guide covers quickstart")
+        login_sample = (
+            "function QRLogin:_begin_protocol()\n"
+            "    local login_cookies = { wr_fp = self.settings:get_device_fingerprint() }\n"
+            "    local _, page_code, page_headers = self.client:request_follow({\n"
+            "        url = SKILLS_PAGE_URL,"
+        )
+        patched_login = patch_weread_qr_login_text(login_sample)
+        check(WEREAD_LOGIN_MARKER in patched_login and "login_cookies.wr_gid" in patched_login, "weread login patch")
+        qr_sample = (
+            "function QRLogin:_show_qr(uid, generation)\n"
+            "    self.qr_dialog = dialog\n"
+            "    UIManager:show(dialog)\n"
+            "    self.host:refreshUI()\n"
+            "function QRLogin:_poll(uid, generation, otp)\n"
+            "        if is_timeout_error(result) then\n"
+            "            self:_schedule_poll(uid, generation)\n"
+            "            return\n"
+            "        end\n"
+        )
+        patched_qr = patch_weread_qr_login_text(qr_sample)
+        check("scheduleIn(0.2" in patched_qr and 'find("HTTP 401", 1, true)' in patched_qr, "weread qr and 401 patch")
+        check(patch_weread_qr_login_text(patched_login) == patched_login, "weread login patch stays")
+        check(patch_weread_qr_login_text(patched_qr) == patched_qr, "weread qr patch stays")
         check('saveSetting("SSH_autostart", false)' in guide, "wekindle clears ssh on next launch")
         check('saveSetting("SSH_autostart", true)' not in guide, "wekindle never enables ssh autostart")
         init_body = guide.split("function WeKindle:init()", 1)[1]
