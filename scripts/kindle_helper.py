@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import inspect
 import io
 import ipaddress
 import json
@@ -45,37 +46,32 @@ SSH_PORT = 2222
 SSH_USER = "root"
 REMOTE_PLUGIN_PARENT = "/mnt/us/koreader/plugins"
 CGNAT = ipaddress.ip_network("100.64.0.0/10")
-SSH_LUA_SETTINGS = {
-    "SSH_port": '"2222"',
-    "SSH_allow_no_password": "true",
-    "SSH_autostart": "true",
-    "SSH_key_only_auth": "false",
-}
+# Shown after a wireless step. Install never writes SSH_autostart = true.
+SSH_OFF_NOTE = "用完后请回到顶部菜单 → 网络 → SSH 服务器，取消勾选 SSH 服务器。"
+JAILBREAK_ACK_FLAG = "--i-accept-jailbreak-risk"
 
-# Verified 2026-10-21 against kindlemodding.org and the upstream release archives.
-# Softfloat MRPI is NiLuJe's classic 1.7.N package. The khf archive is only for
-# firmware >= 5.16.3. The coplate-era KUAL booklet is the f190a38 snapshot.
-MRPI_URLS = {
-    "coplate": (
-        "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/"
-        "installing-kual-mrpi/kual-mrinstaller-1.7.N-r19303.zip"
-    ),
-    "hardfloat": (
-        "https://kindlemodding.org/jailbreaking/Legacy/post-jailbreak/"
-        "installing-kual-mrpi/kual-mrinstaller-khf.zip"
-    ),
+# Every file written to the Kindle is pinned in scripts/pins.json.
+PIN_KEYS = (
+    "winterbreak",
+    "winterbreak2",
+    "languagebreak",
+    "adbreak",
+    "hotfix",
+    "mrpi-coplate",
+    "mrpi-hardfloat",
+    "kual-coplate",
+    "kual-hardfloat",
+    "peki",
+    "koreader-kindlepw2",
+    "koreader-kindlehf",
+    "weread",
+    "miuread",
+    "simpleui",
+)
+KUAL_PIN_KEYS = {
+    "coplate": ("mrpi-coplate", "kual-coplate"),
+    "hardfloat": ("mrpi-hardfloat", "kual-hardfloat"),
 }
-KUAL_URLS = {
-    "coplate": (
-        "https://storage.gra.cloud.ovh.net/v1/AUTH_2ac4bfee353948ec8ea7fd1710574097/"
-        "mr-public/KUAL/KUAL-f190a38-20240104.tar.xz"
-    ),
-    "hardfloat": (
-        "https://github.com/yparitcher/KUAL_Booklet/releases/download/V1.4/"
-        "KOL-V1.4.2-g3795770-20231106-Frameworkless.tar.xz"
-    ),
-}
-PEKI_URL = "https://github.com/KindleTweaks/PEKI/releases/latest/download/PEKI.zip"
 
 SERIAL_PREFIXES = {
     "B00E": "Kindle Paperwhite 1 (2012) WiFi",
@@ -97,7 +93,6 @@ PLUGIN_DIRS = {
     "weread": "weread.koplugin",
     "miuread": "miuread.koplugin",
 }
-SIMPLEUI_REPO = "joeseesun/qiaomu-simpleui"
 SIMPLEUI_DIR = "simpleui.koplugin"
 SIMPLEUI_ASSET = "simpleui.koplugin.zip"
 WEKINDLE_DIR = "wekindle.koplugin"
@@ -108,18 +103,6 @@ return {
 """
 SIMPLEUI_MIN_KOREADER = "2026.03"
 REMOTE_SUI_SETTINGS = "/mnt/us/koreader/settings/simpleui/sui_settings.lua"
-
-GITHUB_REPOS = {
-    "winterbreak": "KindleModding/WinterBreak",
-    "winterbreak2": "KindleModding/Winterbreak2",
-    "languagebreak": "notmarek/LanguageBreak",
-    "adbreak": "KindleModding/AdBreak",
-    "hotfix": "KindleModding/Hotfix",
-    "koreader": "koreader/koreader",
-    "weread": "finlater/weread.koplugin",
-    "miuread": "miumiupy98-art/miuread-koreader",
-    "simpleui": SIMPLEUI_REPO,
-}
 
 
 class SafetyError(Exception):
@@ -173,6 +156,22 @@ def route_firmware(firmware: str) -> dict[str, str]:
     }
 
 
+def require_jailbreak_acknowledgement(accepted: bool) -> None:
+    """Block install-jailbreak until the operator accepts warranty loss, brick risk, and recovery."""
+    if accepted:
+        return
+    raise SafetyError(
+        "越狱会让这台 Kindle 失去亚马逊保修。失败时可能变砖：开不了机，或者卡在更新失败。"
+        "恢复方法：先把 documents 文件夹复制到电脑；设备还能开机时，按 "
+        "https://kindlemodding.org/jailbreaking/unjailbreaking.html 退出越狱并装回官方固件；"
+        "若卡在 Update Failed，按 https://kindlemodding.org/jailbreaking/recovering-from-a-reset.html "
+        "把对应机型的官方固件 .bin 放到 Kindle 根目录后重启；"
+        "AdBreak 改过的广告文件可以用 restore-assets 还原；"
+        "电脑完全认不出磁盘时，这个工具修不好。"
+        f"确认这些之后，重新运行并加上 {JAILBREAK_ACK_FLAG}。"
+    )
+
+
 def recommend_method(firmware: str) -> str:
     if version_ge(firmware, ADBREAK_MIN):
         return "adbreak"
@@ -218,27 +217,6 @@ def should_retry(exc: Exception) -> bool:
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code in {429, 500, 502, 503, 504}
     return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
-
-
-def request_bytes(url: str, timeout: int, mirror: str | None, headers: dict[str, str] | None = None) -> bytes:
-    merged = {"User-Agent": USER_AGENT}
-    if headers:
-        merged.update(headers)
-    last_error: Exception | None = None
-    for candidate in mirror_candidates(url, mirror):
-        for attempt in range(3):
-            try:
-                request = urllib.request.Request(candidate, headers=merged)
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    return response.read()
-            except Exception as exc:
-                last_error = exc
-                if not should_retry(exc):
-                    break
-                delay = 2 ** attempt
-                log(f"请求失败，{delay} 秒后重试 ({attempt + 1}/3): {exc}")
-                time.sleep(delay)
-    raise NetworkError(f"下载失败: {url} ({last_error})")
 
 
 def download_file(url: str, dest: Path, mirror: str | None, timeout: int = 180) -> Path:
@@ -287,29 +265,100 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def github_releases(repo: str, mirror: str | None) -> list[dict]:
-    """Return recent releases, including prereleases.
+def pins_path() -> Path:
+    return Path(__file__).resolve().parent / "pins.json"
 
-    /releases/latest hides prereleases. Qiaomu SimpleUI currently publishes only
-    prerelease tags, so that endpoint is empty for this repository.
-    """
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
-    raw = request_bytes(
-        url,
-        timeout=30,
-        mirror=mirror,
-        headers={"Accept": "application/vnd.github+json"},
-    )
+
+def _validate_pin(key: str, item: object) -> dict[str, str]:
+    if not isinstance(item, dict):
+        raise SafetyError(f"下载清单里的 {key} 不是对象。")
+    version = str(item.get("version") or "").strip()
+    filename = str(item.get("filename") or "").strip()
+    url = str(item.get("url") or "").strip()
+    digest = str(item.get("sha256") or "").strip().lower()
+    if not version or not filename or not url.startswith("https://"):
+        raise SafetyError(f"下载清单里的 {key} 缺少 version、filename 或 https URL。")
+    if filename != Path(filename).name or "/" in filename or "\\" in filename:
+        raise SafetyError(f"下载清单里的 {key} 文件名不安全。")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SafetyError(f"下载清单里的 {key} SHA-256 无效。")
+    return {"version": version, "filename": filename, "url": url, "sha256": digest}
+
+
+def load_pins() -> dict[str, dict[str, str]]:
+    path = pins_path()
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise NetworkError(f"GitHub API 返回的不是 JSON: {repo}") from exc
-    if isinstance(payload, dict):
-        message = payload.get("message", "未知错误")
-        raise NetworkError(f"读取 {repo} 的 Release 列表失败: {message}")
-    if not isinstance(payload, list):
-        raise NetworkError(f"读取 {repo} 的 Release 列表失败。")
-    return [item for item in payload if isinstance(item, dict)]
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SafetyError(f"无法读取下载清单 {path.name}。") from exc
+    packages = payload.get("packages") if isinstance(payload, dict) else None
+    if not isinstance(packages, dict):
+        raise SafetyError("下载清单缺少 packages。")
+    loaded = {str(key): _validate_pin(str(key), item) for key, item in packages.items()}
+    missing = [key for key in PIN_KEYS if key not in loaded]
+    if missing:
+        raise SafetyError("下载清单缺少: " + ", ".join(missing))
+    return loaded
+
+
+def pin_for(key: str) -> dict[str, str]:
+    pins = load_pins()
+    if key not in pins:
+        raise SafetyError(f"下载清单里没有 {key}。")
+    return pins[key]
+
+
+def verify_pinned_file(path: Path, expected: str, label: str) -> None:
+    """Reject a file whose SHA-256 is not the pinned digest. Deletes it on mismatch."""
+    if not path.is_file():
+        raise SafetyError(f"缺少 {label}，已停止，没有写入 Kindle。")
+    actual = sha256_file(path)
+    if actual.lower() != expected.lower():
+        path.unlink(missing_ok=True)
+        raise SafetyError(
+            f"{label} 的 SHA-256 与下载清单不一致，已删除该文件并停止，没有写入 Kindle。"
+            f" 期望 {expected.lower()}，实际 {actual.lower()}。"
+        )
+
+
+def _cached_pin_matches(path: Path, expected: str) -> bool:
+    return path.is_file() and sha256_file(path).lower() == expected.lower()
+
+
+def download_pinned(key: str, cache: Path, mirror: str | None) -> tuple[dict[str, str], Path]:
+    """Download one pinned file. Mirror bytes are hashed the same way and rejected on mismatch."""
+    pin = pin_for(key)
+    dest = cache / "downloads" / pin["filename"]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if _cached_pin_matches(dest, pin["sha256"]):
+        log(f"使用已校验的缓存 {dest.name} ({pin['version']})")
+        return pin, dest
+    if dest.exists():
+        log(f"缓存 {dest.name} 与清单不一致，重新下载")
+        dest.unlink()
+    network_errors: list[str] = []
+    saw_mismatch = False
+    for url in mirror_candidates(pin["url"], mirror):
+        try:
+            download_file(url, dest, None)
+        except NetworkError as exc:
+            network_errors.append(str(exc))
+            if dest.exists():
+                dest.unlink()
+            continue
+        if _cached_pin_matches(dest, pin["sha256"]):
+            log(f"SHA-256 校验通过: {dest.name} ({pin['version']})")
+            return pin, dest
+        saw_mismatch = True
+        log(f"{pin['filename']} 与清单不一致，已丢弃: {url}")
+        if dest.exists():
+            dest.unlink()
+    if dest.exists():
+        dest.unlink()
+    if saw_mismatch:
+        raise SafetyError(f"{pin['filename']} 的 SHA-256 与下载清单不一致，已停止，没有写入 Kindle。")
+    detail = network_errors[-1] if network_errors else "没有可用的下载地址"
+    raise NetworkError(f"下载失败: {pin['filename']} ({detail})")
 
 
 def select_release(releases: Sequence[dict], predicate: Callable[[str], bool]) -> tuple[dict, dict]:
@@ -343,36 +392,6 @@ def checksum_from_sums(text: str, filename: str) -> str | None:
         if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
             return digest.lower()
     return None
-
-
-def github_latest(repo: str, mirror: str | None) -> dict:
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    raw = request_bytes(
-        url,
-        timeout=30,
-        mirror=mirror,
-        headers={"Accept": "application/vnd.github+json"},
-    )
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise NetworkError(f"GitHub API 返回的不是 JSON: {repo}") from exc
-    if "assets" not in payload:
-        message = payload.get("message", "未知错误")
-        raise NetworkError(f"读取 {repo} 最新 Release 失败: {message}")
-    return payload
-
-
-def choose_asset(release: dict, predicate: Callable[[str], bool], prefer: str | None = None) -> dict:
-    matched = [asset for asset in release.get("assets", []) if predicate(asset.get("name", ""))]
-    if prefer:
-        preferred = [asset for asset in matched if prefer in asset.get("name", "").lower()]
-        if preferred:
-            matched = preferred
-    if not matched:
-        tag = release.get("tag_name", "unknown")
-        raise NetworkError(f"在 Release {tag} 里没有找到需要的安装包。")
-    return matched[0]
 
 
 def safe_relative(name: str) -> Path | None:
@@ -812,28 +831,6 @@ def payload_root(extracted: Path, required_names: Sequence[str]) -> Path:
     raise SafetyError(f"压缩包里找不到 {', '.join(required_names)}。顶层是: {preview}")
 
 
-def download_named_release(repo: str, cache: Path, mirror: str | None, predicate: Callable[[str], bool], prefer: str | None = None) -> tuple[dict, Path]:
-    release = github_latest(repo, mirror)
-    asset = choose_asset(release, predicate, prefer)
-    dest = cache / "downloads" / asset["name"]
-    if dest.is_file() and dest.stat().st_size == asset.get("size", dest.stat().st_size):
-        log(f"使用已缓存的 {dest.name}")
-    else:
-        download_file(asset["browser_download_url"], dest, mirror)
-    sidecar_name = asset["name"] + ".sha256"
-    sidecar = next((item for item in release.get("assets", []) if item.get("name") == sidecar_name), None)
-    if sidecar:
-        sidecar_path = cache / "downloads" / sidecar_name
-        download_file(sidecar["browser_download_url"], sidecar_path, mirror)
-        digest = sidecar_path.read_text(encoding="utf-8", errors="replace").strip().split()[0]
-        actual = sha256_file(dest)
-        if actual.lower() != digest.lower():
-            dest.unlink(missing_ok=True)
-            raise SafetyError(f"{dest.name} 的 SHA-256 校验失败。")
-        log(f"SHA-256 校验通过: {dest.name}")
-    return release, dest
-
-
 def fresh_extract(archive: Path, cache: Path) -> Path:
     extracted = cache / "extracted" / archive.stem
     if extracted.exists():
@@ -957,7 +954,13 @@ def install_jailbreak_payload(kindle: Path, method: str, archive: Path, cache: P
         cached_hotfix = cache / "hotfix" / matches[0].name
         cached_hotfix.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(matches[0], cached_hotfix)
-        write_state(cache, hotfix_path=str(cached_hotfix), hotfix_name=cached_hotfix.name, jailbreak_method=method)
+        write_state(
+            cache,
+            hotfix_path=str(cached_hotfix),
+            hotfix_name=cached_hotfix.name,
+            hotfix_sha256=sha256_file(cached_hotfix),
+            jailbreak_method=method,
+        )
     else:
         raise SafetyError(f"未知越狱方案: {method}")
     copied = merge_tree(root, kindle)
@@ -970,22 +973,34 @@ def install_jailbreak_payload(kindle: Path, method: str, archive: Path, cache: P
     return {"copied_files": copied}
 
 
-def cache_universal_hotfix(cache: Path, mirror: str | None) -> Path:
-    release, archive = download_named_release(
-        GITHUB_REPOS["hotfix"],
-        cache,
-        mirror,
-        lambda name: name.lower() == "update_hotfix_universal.bin" or (
-            "universal" in name.lower() and name.lower().endswith(".bin")
-        ),
-    )
-    del release
-    cached = cache / "hotfix" / archive.name
+def remember_hotfix(cache: Path, blob: Path, digest: str) -> Path:
+    cached = cache / "hotfix" / blob.name
     cached.parent.mkdir(parents=True, exist_ok=True)
-    if archive.resolve() != cached.resolve():
-        shutil.copy2(archive, cached)
-    write_state(cache, hotfix_path=str(cached), hotfix_name=cached.name)
+    if blob.resolve() != cached.resolve():
+        shutil.copy2(blob, cached)
+    write_state(cache, hotfix_path=str(cached), hotfix_name=cached.name, hotfix_sha256=digest.lower())
     return cached
+
+
+def verified_hotfix_file(cache: Path, mirror: str | None) -> Path:
+    """Return a hotfix blob whose bytes match a recorded or pinned SHA-256."""
+    state = read_state(cache)
+    raw = state.get("hotfix_path")
+    expected = str(state.get("hotfix_sha256") or "").lower()
+    hotfix = Path(str(raw)) if raw else None
+    if (
+        hotfix is not None
+        and hotfix.is_file()
+        and re.fullmatch(r"[0-9a-f]{64}", expected)
+        and sha256_file(hotfix).lower() == expected
+    ):
+        return hotfix
+    if hotfix is not None and hotfix.is_file():
+        log("缓存的 Hotfix 校验失败，改为下载清单里的通用 Hotfix。")
+        hotfix.unlink()
+    pin, archive = download_pinned("hotfix", cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    return remember_hotfix(cache, archive, pin["sha256"])
 
 
 def select_install_bin(extracted: Path) -> Path:
@@ -999,8 +1014,8 @@ def select_install_bin(extracted: Path) -> Path:
 
 
 def install_peki(kindle: Path, cache: Path, mirror: str | None) -> dict[str, object]:
-    archive = cache / "downloads" / "PEKI.zip"
-    download_file(PEKI_URL, archive, mirror)
+    pin, archive = download_pinned("peki", cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
     extracted = fresh_extract(archive, cache)
     jars = list(extracted.rglob("KUAL.jar"))
     scripts = list(extracted.rglob("KUAL.sh"))
@@ -1063,17 +1078,10 @@ def plugin_choices(choice: str) -> list[str]:
 
 def fetch_plugin_source(choice: str, cache: Path, mirror: str | None) -> tuple[str, str, Path]:
     folder_name = PLUGIN_DIRS[choice]
-    if choice == "weread":
-        predicate = lambda name: name.lower().endswith(".zip") and "weread.koplugin" in name.lower()
-        prefer = None
-    else:
-        predicate = lambda name: (
-            name.lower().endswith(".zip") and "miuread" in name.lower() and "beta" not in name.lower()
-        )
-        prefer = "full"
-    release, archive = download_named_release(GITHUB_REPOS[choice], cache, mirror, predicate, prefer)
+    pin, archive = download_pinned(choice, cache, mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
     source = plugin_source(fresh_extract(archive, cache), folder_name)
-    return folder_name, str(release.get("tag_name")), source
+    return folder_name, pin["version"], source
 
 
 def remember_plugins(cache: Path, choices: Sequence[str]) -> list[str]:
@@ -1178,40 +1186,16 @@ def simpleui_version_label(source: Path, release: str | None) -> str:
     return match.group(1) if match else "local"
 
 
-def verify_sha256_sums(release: dict, archive: Path, cache: Path, mirror: str | None) -> None:
-    sums = next((item for item in release.get("assets", []) if item.get("name") == "SHA256SUMS"), None)
-    if not isinstance(sums, dict):
-        archive.unlink(missing_ok=True)
-        raise SafetyError("这个 Release 没有 SHA256SUMS，已停止。")
-    sums_path = cache / "downloads" / f"{archive.name}.SHA256SUMS"
-    download_file(str(sums["browser_download_url"]), sums_path, mirror)
-    expected = checksum_from_sums(sums_path.read_text(encoding="utf-8", errors="replace"), archive.name)
-    if expected is None:
-        archive.unlink(missing_ok=True)
-        raise SafetyError(f"SHA256SUMS 里没有 {archive.name}。")
-    actual = sha256_file(archive)
-    if actual.lower() != expected:
-        archive.unlink(missing_ok=True)
-        raise SafetyError(f"{archive.name} 的 SHA-256 校验失败。")
-    log(f"SHA-256 校验通过: {archive.name}")
-
-
 def fetch_simpleui_release(cache: Path, mirror: str | None) -> tuple[str, Path]:
-    release, asset = select_release(github_releases(SIMPLEUI_REPO, mirror), is_simpleui_asset)
-    if asset.get("name") != SIMPLEUI_ASSET:
+    pin, dest = download_pinned("simpleui", cache, mirror)
+    verify_pinned_file(dest, pin["sha256"], pin["filename"])
+    if dest.name != SIMPLEUI_ASSET:
+        dest.unlink(missing_ok=True)
         raise SafetyError("拒绝下载 Source code ZIP。安装包必须正好叫 simpleui.koplugin.zip。")
-    dest = cache / "downloads" / SIMPLEUI_ASSET
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    size = asset.get("size")
-    if dest.is_file() and size and dest.stat().st_size == size:
-        log(f"使用已缓存的 {dest.name}")
-    else:
-        download_file(str(asset["browser_download_url"]), dest, mirror)
-    verify_sha256_sums(release, dest, cache, mirror)
     source = plugin_source(fresh_extract(dest, cache), SIMPLEUI_DIR)
     if source.name != SIMPLEUI_DIR or not (source / "_meta.lua").is_file():
         raise SafetyError("安装包里没有合格的 simpleui.koplugin。不要改用 GitHub Source code ZIP。")
-    return str(release.get("tag_name") or ""), source
+    return pin["version"], source
 
 
 def backup_installed_plugin(kindle: Path, cache: Path, folder_name: str) -> Path | None:
@@ -1238,7 +1222,8 @@ def restore_plugin_dir(kindle: Path, folder_name: str, backup: Path | None) -> N
 def simpleui_message(label: str, had_backup: bool, *, wifi: bool) -> str:
     restart = "请在 KOReader 里完全退出，再重新打开。" if wifi else "请安全弹出 Kindle，再打开 KOReader。"
     previous = "原来的插件已备份。" if had_backup else ""
-    return f"乔木 SimpleUI {label} 已写入。{restart}{previous}打开后会直接进入新主页。个人设置没有改。"
+    ssh = SSH_OFF_NOTE if wifi else ""
+    return f"乔木 SimpleUI {label} 已写入。{restart}{previous}打开后会直接进入新主页。个人设置没有改。{ssh}"
 
 
 def open_home_message(*, wifi: bool) -> str:
@@ -1246,10 +1231,13 @@ def open_home_message(*, wifi: bool) -> str:
         lead = "装好了。请在 KOReader 里完全退出，再重新打开。"
     else:
         lead = "装好了。请安全弹出 Kindle，连上 Wi-Fi，打开 KUAL，点 KOReader。"
-    return (
+    text = (
         f"{lead}第一次会直接进入新主页。"
         "屏幕会先说明如何在手机微信读书里获取 API Key，然后显示微信二维码。"
     )
+    if wifi:
+        text += SSH_OFF_NOTE
+    return text
 
 
 def simpleui_installed_on(kindle: Path) -> bool:
@@ -1313,6 +1301,7 @@ def install_simpleui_usb(kindle: Path, cache: Path, source: Path, label: str) ->
         sync_kindle(kindle)
         raise SafetyError("安装碰到了 settings/simpleui，已撤回插件并写回原来的设置。")
     prepare_home_usb(kindle)
+    clear_usb_ssh_autostart(kindle)
     backup_text = None if backup is None else str(backup)
     write_state(cache, simpleui_release=label, simpleui_backup=backup_text)
     return {
@@ -1366,16 +1355,22 @@ def ensure_lua_settings(path: Path, values: dict[str, str], *, error: str) -> No
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def preset_koreader_ssh(kindle: Path) -> None:
-    """Write KOReader's own SSH settings so the server can start on the next launch."""
+def disable_koreader_ssh_autostart(kindle: Path) -> None:
+    """Keep KOReader from starting SSH on launch. Never write SSH_autostart = true."""
     directory = kindle / "koreader"
     if not directory.is_dir():
-        raise SafetyError("没有 koreader 目录，不能预置 SSH。")
+        raise SafetyError("没有 koreader 目录，不能关闭 SSH 自启动。")
     ensure_lua_settings(
         directory / "settings.reader.lua",
-        SSH_LUA_SETTINGS,
-        error="settings.reader.lua 无法识别，没有改动 SSH 设置。请在 KOReader 里手动开启 SSH。",
+        {"SSH_autostart": "false"},
+        error="settings.reader.lua 无法识别，没有关闭 SSH 自启动。",
     )
+
+
+def clear_usb_ssh_autostart(kindle: Path) -> None:
+    """Turn off SSH autostart on a USB install, including a file left true by an older install."""
+    disable_koreader_ssh_autostart(kindle)
+    sync_kindle(kindle)
 
 
 def preset_simpleui_launch(kindle: Path) -> None:
@@ -1412,6 +1407,12 @@ def wekindle_source() -> Path:
 
 def deploy_wekindle_usb(kindle: Path) -> Path:
     return deploy_plugin(kindle, wekindle_source(), WEKINDLE_DIR)
+
+
+def deploy_wekindle_wifi(ip: str, port: int, cache: Path) -> str:
+    """Copy the guide plugin. It clears SSH autostart on the next launch, not over the live settings file."""
+    staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
+    return upload_plugin(staged, ip, port, cache)
 
 
 def prepare_home_usb(kindle: Path) -> None:
@@ -1464,7 +1465,13 @@ def prefix_from_mask(mask: str) -> int:
 
 
 def decode_console(raw: bytes) -> str:
-    encodings = ["oem", "mbcs", "gbk", "utf-8"] if os.name == "nt" else ["utf-8"]
+    """Pick the decoding that yields the most ipconfig addresses.
+
+    Chinese Windows prints ipconfig in GBK/OEM. The GBK codec is in the
+    standard library on Linux and macOS too; trying it only when os.name is
+    nt made the self-check fail on those systems.
+    """
+    encodings = ["oem", "mbcs", "gbk", "utf-8"]
     best = raw.decode("utf-8", errors="replace")
     best_score = len(parse_ipconfig(best))
     for encoding in encodings:
@@ -1828,8 +1835,8 @@ def paramiko_upload(local_dir: Path, ip: str, port: int) -> None:
         raise
     except Exception as exc:
         raise SafetyError(
-            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中勾选 SSH 服务器，并勾选允许无密码登录。"
-            f" 详细信息: {exc}"
+            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中临时勾选 SSH 服务器，并勾选允许无密码登录。"
+            f"{SSH_OFF_NOTE} 详细信息: {exc}"
         ) from exc
     finally:
         client.close()
@@ -1866,8 +1873,8 @@ def paramiko_connect(ip: str, port: int) -> object:
     except Exception as exc:
         client.close()
         raise SafetyError(
-            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中勾选 SSH 服务器，并勾选允许无密码登录。"
-            f" 详细信息: {exc}"
+            "无线登录失败。请在 KOReader 顶部菜单 → 网络 → SSH 服务器中临时勾选 SSH 服务器，并勾选允许无密码登录。"
+            f"{SSH_OFF_NOTE} 详细信息: {exc}"
         ) from exc
     return client
 
@@ -2116,8 +2123,7 @@ def prepare_home_wifi(ip: str, port: int, cache: Path) -> None:
         port,
         cache,
         "if test -f /mnt/us/koreader/settings/simpleui/sui_settings.lua; then echo SUI_PRESENT; "
-        "else echo SUI_ABSENT; fi; "
-        "if test -f /mnt/us/koreader/plugins/weread.koplugin/main.lua; then echo WEREAD_PRESENT; fi",
+        "else echo SUI_ABSENT; fi",
     )
     if has_line(text, "SUI_ABSENT") and not has_line(text, "SUI_PRESENT"):
         remote_shell(ip, port, cache, "mkdir -p /mnt/us/koreader/settings/simpleui && echo DIR_OK")
@@ -2126,16 +2132,15 @@ def prepare_home_wifi(ip: str, port: int, cache: Path) -> None:
         local.write_text(ONBOARDING_SKIP_LUA, encoding="utf-8", newline="\n")
         upload_remote_sui_settings(ip, port, cache, local)
         remote_shell(ip, port, cache, "sync")
-    if has_line(text, "WEREAD_PRESENT"):
-        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
-        upload_plugin(staged, ip, port, cache)
+    deploy_wekindle_wifi(ip, port, cache)
 
 
 def ssh_enable_message(ip: str | None = None) -> str:
     target = f"{ip} 的 " if ip else ""
     return (
         f"还连不上{target}{SSH_PORT} 端口。请打开 KOReader，进入顶部菜单 → 网络 → SSH 服务器，"
-        "勾选 SSH 服务器，并勾选允许无密码登录。确认和电脑在同一个 Wi-Fi 后，回复「SSH 已开」。"
+        "临时勾选 SSH 服务器，并勾选允许无密码登录。确认和电脑在同一个 Wi-Fi 后，回复「SSH 已开」。"
+        + SSH_OFF_NOTE
     )
 
 
@@ -2166,7 +2171,7 @@ def wifi_done_message(plugins: Sequence[str], *, home: bool = False) -> str:
         sentences.append("微信读书会在屏幕上提示扫码。")
     if not plugins and not home:
         sentences.append("然后从顶部工具栏进入已经安装的阅读插件。")
-    return "".join(sentences)
+    return "".join(sentences) + SSH_OFF_NOTE
 
 
 def emit(args: argparse.Namespace, payload: dict, code: int) -> None:
@@ -2231,26 +2236,23 @@ def cmd_clean_ota(args: argparse.Namespace) -> dict:
 
 
 def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
+    require_jailbreak_acknowledgement(args.i_accept_jailbreak_risk)
     kindle = require_kindle(args)
     firmware = require_firmware(kindle, args)
     method = args.method or recommend_method(firmware)
     validate_method(method, firmware, args.force, args.i_understand_this_wipes_the_kindle)
     require_space(kindle, 80)
     cache = cache_dir(args)
-    removed = clean_ota(kindle)
-    repo = GITHUB_REPOS[method]
-    if method == "winterbreak2":
-        predicate = lambda name: name.lower() == "wb2.zip"
-    elif method == "languagebreak":
-        predicate = lambda name: name.lower().endswith((".tar.gz", ".tgz", ".zip"))
-    elif method == "adbreak":
-        predicate = lambda name: "adbreak" in name.lower() and name.lower().endswith(".zip")
-    else:
-        predicate = lambda name: name.lower().endswith((".tar.gz", ".tgz", ".zip"))
-    prefer = ".tar.gz" if method in {"winterbreak", "languagebreak"} else None
-    release, archive = download_named_release(repo, cache, args.mirror, predicate, prefer)
+    pin, archive = download_pinned(method, cache, args.mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    hotfix_pin: dict[str, str] | None = None
+    hotfix_archive: Path | None = None
     if method != "languagebreak":
-        cache_universal_hotfix(cache, args.mirror)
+        hotfix_pin, hotfix_archive = download_pinned("hotfix", cache, args.mirror)
+        verify_pinned_file(hotfix_archive, hotfix_pin["sha256"], hotfix_pin["filename"])
+    removed = clean_ota(kindle)
+    if hotfix_pin is not None and hotfix_archive is not None:
+        remember_hotfix(cache, hotfix_archive, hotfix_pin["sha256"])
     details = install_jailbreak_payload(kindle, method, archive, cache, args.locale)
     write_state(cache, jailbreak_method=method)
     sync_kindle(kindle)
@@ -2263,7 +2265,7 @@ def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
         "status": "awaiting_user",
         "firmware": firmware,
         "method": method,
-        "release": release.get("tag_name"),
+        "release": pin["version"],
         "removed_ota": removed,
         "user_steps": steps,
         "message": message,
@@ -2275,10 +2277,9 @@ def cmd_install_jailbreak(args: argparse.Namespace) -> dict:
 def cmd_install_hotfix(args: argparse.Namespace) -> dict:
     kindle = require_kindle(args)
     cache = cache_dir(args)
-    state = read_state(cache)
-    hotfix = Path(str(state["hotfix_path"])) if state.get("hotfix_path") else None
-    if hotfix is None or not hotfix.is_file():
-        hotfix = cache_universal_hotfix(cache, args.mirror)
+    hotfix = verified_hotfix_file(cache, args.mirror)
+    expected = str(read_state(cache).get("hotfix_sha256") or "")
+    verify_pinned_file(hotfix, expected, hotfix.name)
     require_space(kindle, 20)
     clean_ota(kindle, remove_hotfix_bins=True)
     target = kindle / hotfix.name
@@ -2324,10 +2325,11 @@ def cmd_install_kual(args: argparse.Namespace) -> dict:
         )
     require_space(kindle, 80)
     cache = cache_dir(args)
-    mrpi_archive = cache / "downloads" / Path(MRPI_URLS[variant]).name
-    kual_archive = cache / "downloads" / Path(KUAL_URLS[variant]).name
-    download_file(MRPI_URLS[variant], mrpi_archive, args.mirror)
-    download_file(KUAL_URLS[variant], kual_archive, args.mirror)
+    mrpi_key, kual_key = KUAL_PIN_KEYS[variant]
+    mrpi_pin, mrpi_archive = download_pinned(mrpi_key, cache, args.mirror)
+    kual_pin, kual_archive = download_pinned(kual_key, cache, args.mirror)
+    verify_pinned_file(mrpi_archive, mrpi_pin["sha256"], mrpi_pin["filename"])
+    verify_pinned_file(kual_archive, kual_pin["sha256"], kual_pin["filename"])
     mrpi_root = fresh_extract(mrpi_archive, cache)
     for folder_name in ("extensions", "mrpackages"):
         source = payload_root(mrpi_root, [folder_name]) / folder_name
@@ -2366,44 +2368,36 @@ def cmd_install_koreader(args: argparse.Namespace) -> dict:
             raise SafetyError(f"固件 {firmware} 必须安装 {expected}，不能安装 {args.arch}。")
     require_space(kindle, 300)
     cache = cache_dir(args)
-    pattern = re.compile(rf"^koreader-{re.escape(args.arch)}-v.+\.zip$", re.IGNORECASE)
-    release, archive = download_named_release(
-        GITHUB_REPOS["koreader"],
-        cache,
-        args.mirror,
-        lambda name: bool(pattern.match(name)),
-    )
+    pin_key = f"koreader-{args.arch}"
+    pin, archive = download_pinned(pin_key, cache, args.mirror)
+    verify_pinned_file(archive, pin["sha256"], pin["filename"])
+    if f"koreader-{args.arch}-" not in pin["filename"]:
+        raise SafetyError(f"清单里的 {pin_key} 不是 {args.arch} 安装包，已停止，没有写入 Kindle。")
     extracted = fresh_extract(archive, cache)
     copied = merge_tree(koreader_root(extracted), kindle)
     launcher = kindle / "extensions" / "koreader"
     program = kindle / "koreader"
     if not program.is_dir() or not launcher.is_dir():
         raise SafetyError("解压后没有同时得到 koreader 和 extensions/koreader。Kindle 上的半成品请先不要使用。")
-    ssh_preset = True
-    ssh_error = ""
-    try:
-        preset_koreader_ssh(kindle)
-    except SafetyError as exc:
-        ssh_preset = False
-        ssh_error = str(exc)
-        log(ssh_error)
+    disable_koreader_ssh_autostart(kindle)
     sync_kindle(kindle)
-    write_state(cache, koreader_arch=args.arch, koreader_release=release.get("tag_name"), ssh_preset=ssh_preset)
-    if ssh_preset:
-        ssh_note = "SSH 已预置为端口 2222，会随 KOReader 启动，并允许无密码登录。"
-    else:
-        ssh_note = "SSH 没能写入配置，稍后需要在 KOReader 里手动开启。"
+    write_state(
+        cache,
+        koreader_arch=args.arch,
+        koreader_release=pin["version"],
+        ssh_autostart=False,
+    )
     return {
         "ok": True,
         "command": "install-koreader",
         "status": "installed",
         "arch": args.arch,
-        "release": release.get("tag_name"),
+        "release": pin["version"],
         "copied_files": copied,
-        "ssh_preset": ssh_preset,
-        "ssh_error": ssh_error,
+        "ssh_autostart": False,
         "message": (
-            f"KOReader {release.get('tag_name')}（{args.arch}）已写入 Kindle。{ssh_note}"
+            f"KOReader {pin['version']}（{args.arch}）已写入 Kindle。"
+            "SSH 不会随 KOReader 启动。需要无线操作时，再在 KOReader 里临时打开 SSH。"
             "先不要弹出。接下来会装上微信读书和新主页。"
         ),
     }
@@ -2473,6 +2467,7 @@ def cmd_install_plugin(args: argparse.Namespace) -> dict:
     elif "weread" in choices:
         deploy_wekindle_usb(kindle)
         sync_kindle(kindle)
+    clear_usb_ssh_autostart(kindle)
     home_ready = not skipped and not simpleui_error and simpleui_installed_on(kindle)
     write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
@@ -2562,9 +2557,8 @@ def cmd_wifi_install_plugin(args: argparse.Namespace) -> dict:
     simpleui, simpleui_error, already = attach_default_simpleui_wifi(ip, port, cache, args.mirror, bool(args.no_simpleui))
     if not args.no_simpleui and (simpleui is not None or already):
         prepare_home_wifi(ip, port, cache)
-    elif "weread" in choices:
-        staged = stage_plugin(wekindle_source(), cache, WEKINDLE_DIR)
-        upload_plugin(staged, ip, port, cache)
+    else:
+        deploy_wekindle_wifi(ip, port, cache)
     home_ready = not args.no_simpleui and not simpleui_error and (simpleui is not None or already)
     write_state(cache, simpleui_ready=home_ready)
     names = "、".join(PLUGIN_DIRS[choice] for choice in choices)
@@ -2653,7 +2647,7 @@ def cmd_finalize(args: argparse.Namespace) -> dict:
         plugins = []
     plugin_names = [str(item) for item in plugins]
     home = state.get("simpleui_ready") is True
-    if state.get("deploy_mode") == "wifi" and kindle is None:
+    if state.get("deploy_mode") == "wifi":
         message = wifi_done_message(plugin_names, home=home)
     else:
         message = login_hint(plugin_names, home=home)
@@ -2736,6 +2730,39 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
 
         digest = sha256_file(booklet_dir / "Update_KUALBooklet_install.bin")
         check(len(digest) == 64, "sha256")
+        pins = load_pins()
+        for key in PIN_KEYS:
+            item = pins[key]
+            check(re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None, f"pin hash {key}")
+            check(item["url"].startswith("https://"), f"pin url {key}")
+            check("/" not in item["filename"] and "\\" not in item["filename"], f"pin name {key}")
+        for arch in ("kindlepw2", "kindlehf"):
+            version = pins[f"koreader-{arch}"]["version"].removeprefix("v")
+            check(version_ge(version, SIMPLEUI_MIN_KOREADER), f"pinned {arch} meets simpleui")
+        check(
+            pins["koreader-kindlepw2"]["version"] == pins["koreader-kindlehf"]["version"],
+            "koreader arch versions match",
+        )
+        check(pins["simpleui"]["filename"] == SIMPLEUI_ASSET, "simpleui pin filename")
+        tampered = root / "tampered.bin"
+        tampered.write_bytes(b"not-the-release")
+        try:
+            verify_pinned_file(tampered, pins["hotfix"]["sha256"], "tampered.bin")
+            check(False, "pin mismatch raises")
+        except SafetyError as exc:
+            check(not tampered.exists(), "pin mismatch deletes file")
+            check("没有写入 Kindle" in str(exc), "pin mismatch fail closed")
+        kept = root / "kept.bin"
+        kept.write_bytes(b"pinned-bytes")
+        verify_pinned_file(kept, hashlib.sha256(b"pinned-bytes").hexdigest(), "kept.bin")
+        check(kept.is_file(), "matching pin kept")
+        check(not _cached_pin_matches(kept, pins["hotfix"]["sha256"]), "bad cache is not a pin hit")
+        mirrored = mirror_candidates(pins["weread"]["url"], "https://ghfast.top/")
+        check(len(mirrored) == 2 and mirrored[1].startswith("https://ghfast.top/https://"), "mirror still verified by hash")
+        helper_now = Path(__file__).read_text(encoding="utf-8")
+        check("def github_" + "latest(" not in helper_now, "no latest release helper")
+        check("def download_" + "named_release(" not in helper_now, "no unpinned release helper")
+        check("/releases/" + "latest" not in helper_now, "no latest release url")
 
         tar_path = root / "sample.tar"
         payload = b"marker"
@@ -2753,17 +2780,16 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
 
         ssh_root = root / "ssh-kindle"
         (ssh_root / "koreader").mkdir(parents=True)
-        preset_koreader_ssh(ssh_root)
+        disable_koreader_ssh_autostart(ssh_root)
         ssh_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
-        check('["SSH_port"] = "2222"' in ssh_text, "ssh port preset")
-        check('["SSH_allow_no_password"] = true' in ssh_text, "ssh no password")
-        check('["SSH_autostart"] = true' in ssh_text, "ssh autostart")
-        check('["SSH_key_only_auth"] = false' in ssh_text, "ssh key auth off")
+        check('["SSH_autostart"] = false' in ssh_text, "ssh autostart off")
+        check("SSH_allow_no_password" not in ssh_text, "install does not enable passwordless ssh")
+        check("SSH_port" not in ssh_text, "install does not preset ssh port")
         preset_simpleui_launch(ssh_root)
         launch_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
         check('["start_with"] = "homescreen_simpleui"' in launch_text, "start with simpleui")
         check('["home_dir"] = "/mnt/us/documents"' in launch_text, "default documents home")
-        check('["SSH_port"] = "2222"' in launch_text, "launch preset keeps ssh")
+        check('["SSH_autostart"] = false' in launch_text, "launch preset keeps ssh off")
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
             'return {\n    ["home_dir"] = "/mnt/us/documents/Books",\n    ["start_with"] = "filemanager",\n}\n',
             encoding="utf-8",
@@ -2779,14 +2805,58 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(b"simpleui_onboarding_done" in seeded_bytes, "onboarding skip key")
         check(not seed_simpleui_skip_onboarding(ssh_root), "do not reseed onboarding")
         check(seeded.read_bytes() == seeded_bytes, "reseed leaves settings")
+        try:
+            require_jailbreak_acknowledgement(False)
+            check(False, "jailbreak ack required")
+        except SafetyError as exc:
+            ack_text = str(exc)
+            check("保修" in ack_text and "变砖" in ack_text and "官方固件" in ack_text, "jailbreak ack names risk and recovery")
+            check(JAILBREAK_ACK_FLAG in ack_text, "jailbreak ack names the flag")
+        require_jailbreak_acknowledgement(True)
         (ssh_root / "koreader" / "settings.reader.lua").write_text(
-            'return {\n    ["font"] = "Droid",\n    ["SSH_port"] = "22",\n}\n',
+            'return {\n    ["font"] = "Droid",\n    ["SSH_autostart"] = true,\n    ["SSH_port"] = "2222",\n}\n',
             encoding="utf-8",
         )
-        preset_koreader_ssh(ssh_root)
+        disable_koreader_ssh_autostart(ssh_root)
         ssh_text = (ssh_root / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
-        check('["font"] = "Droid"' in ssh_text, "ssh preset keeps settings")
-        check('["SSH_port"] = "2222"' in ssh_text, "ssh preset updates port")
+        check('["font"] = "Droid"' in ssh_text, "ssh disable keeps settings")
+        check('["SSH_autostart"] = false' in ssh_text, "ssh autostart cleared")
+        check('["SSH_port"] = "2222"' in ssh_text, "ssh disable leaves port")
+        check('["SSH_autostart"] = true' not in ssh_text, "ssh autostart true removed")
+        legacy = root / "legacy-plugin-kindle"
+        (legacy / "koreader").mkdir(parents=True)
+        (legacy / "koreader" / "settings.reader.lua").write_text(
+            'return {\n    ["SSH_autostart"] = true,\n    ["SSH_allow_no_password"] = true,\n    ["SSH_port"] = "2222",\n}\n',
+            encoding="utf-8",
+        )
+        clear_usb_ssh_autostart(legacy)
+        legacy_text = (legacy / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
+        check('["SSH_autostart"] = false' in legacy_text, "plugin usb clears old ssh autostart")
+        check('["SSH_autostart"] = true' not in legacy_text, "plugin usb removes ssh autostart true")
+        check('["SSH_allow_no_password"] = true' in legacy_text, "plugin usb leaves other ssh flags")
+        check('["SSH_port"] = "2222"' in legacy_text, "plugin usb leaves ssh port")
+        check(
+            "clear_usb_ssh_autostart(kindle)" in inspect.getsource(cmd_install_plugin),
+            "install-plugin clears old ssh",
+        )
+        check(
+            "clear_usb_ssh_autostart(kindle)" in inspect.getsource(install_simpleui_usb),
+            "install-simpleui clears old ssh",
+        )
+        for wifi_command in (cmd_wifi_install_plugin, install_simpleui_wifi, prepare_home_wifi):
+            check(
+                "clear_usb_ssh_autostart" not in inspect.getsource(wifi_command),
+                "wifi install leaves the running settings file",
+            )
+        helper_source = Path(__file__).read_text(encoding="utf-8")
+        forbidden_autostart = '"SSH_autostart"' + ': "true"'
+        check(forbidden_autostart not in helper_source, "source never sets ssh autostart")
+        check("取消勾选" in ssh_enable_message(), "ssh enable says turn off later")
+        check("取消勾选" in open_home_message(wifi=True), "wifi home says turn ssh off")
+        check("取消勾选" not in open_home_message(wifi=False), "usb home leaves ssh note out")
+        check("取消勾选" in wifi_done_message(["miuread"]), "wifi done says turn ssh off")
+        check("取消勾选" in simpleui_message("v1", False, wifi=True), "simpleui wifi says turn ssh off")
+        check("取消勾选" not in simpleui_message("v1", False, wifi=False), "simpleui usb leaves ssh note out")
         check(is_lan_ip("192.168.1.20") and is_lan_ip("10.0.0.2"), "lan ip")
         check(not is_lan_ip("8.8.8.8") and not is_lan_ip("127.0.0.1"), "reject public and loopback")
         check(str(scan_network("10.1.2.3", 8)) == "10.1.2.0/24", "collapse large subnet")
@@ -2823,6 +2893,12 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check(remote_plugin_dir(WEKINDLE_DIR).endswith("/wekindle.koplugin"), "wekindle remote dir")
         guide = (wekindle_source() / "main.lua").read_text(encoding="utf-8")
         check("homescreen_simpleui" in guide and "qr_login" in guide, "login guide plugin")
+        check('saveSetting("SSH_autostart", false)' in guide, "wekindle clears ssh on next launch")
+        check('saveSetting("SSH_autostart", true)' not in guide, "wekindle never enables ssh autostart")
+        init_body = guide.split("function WeKindle:init()", 1)[1]
+        check("self:disableSshAutostart()" in init_body, "wekindle init disables ssh")
+        ensure_body = guide.split("function WeKindle:ensureHome()", 1)[1].split("function WeKindle:", 1)[0]
+        check("SSH_autostart" not in ensure_body, "ssh off is not skipped with start_with")
         chosen, chosen_asset = select_release(
             [
                 {"draft": True, "tag_name": "draft", "assets": [{"name": SIMPLEUI_ASSET}]},
@@ -2942,6 +3018,11 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
             (source / "_meta.lua").write_text('version = "3.0.0-qiaomu.3"\n', encoding="utf-8")
             (source / "sui_settings.lua").write_text("do-not-copy-to-settings", encoding="utf-8")
             check(resolve_simpleui_source(str(source.parent)) == source.resolve(), "resolve parent source")
+            (device / "koreader" / "settings.reader.lua").write_text(
+                'return {\n    ["font"] = "Droid",\n    ["SSH_autostart"] = true,\n'
+                '    ["SSH_allow_no_password"] = true,\n    ["SSH_port"] = "2222",\n}\n',
+                encoding="utf-8",
+            )
             result = install_simpleui_usb(device, root / "simpleui-cache", source, "v3.0.0-qiaomu.3")
         check((device_plugins / SIMPLEUI_DIR / "main.lua").read_text(encoding="utf-8") == "new-ui", "simpleui replaced")
         check(settings.read_bytes() == b"return { keep = true }\n", "simpleui settings preserved")
@@ -2952,6 +3033,10 @@ def cmd_self_check(_args: argparse.Namespace) -> dict:
         check("新主页" in str(result["message"]), "simpleui message opens home")
         reader = (device / "koreader" / "settings.reader.lua").read_text(encoding="utf-8")
         check('["start_with"] = "homescreen_simpleui"' in reader, "install sets start_with")
+        check('["SSH_autostart"] = false' in reader, "usb simpleui clears old ssh autostart")
+        check('["SSH_autostart"] = true' not in reader, "usb simpleui removes ssh autostart true")
+        check('["font"] = "Droid"' in reader, "usb simpleui keeps reader settings")
+        check('["SSH_port"] = "2222"' in reader, "usb simpleui leaves ssh port")
         check((device / "koreader" / "wekindle_home").is_file(), "home marker")
         (device_plugins / "weread.koplugin").mkdir()
         (device_plugins / "weread.koplugin" / "main.lua").write_text("return {}", encoding="utf-8")
@@ -3010,6 +3095,11 @@ def build_parser() -> argparse.ArgumentParser:
     jailbreak.add_argument("--locale", default="zh-Hans-CN", help="LanguageBreak 完成包的语言")
     jailbreak.add_argument("--force", action="store_true")
     jailbreak.add_argument("--i-understand-this-wipes-the-kindle", action="store_true")
+    jailbreak.add_argument(
+        "--i-accept-jailbreak-risk",
+        action="store_true",
+        help="确认已知晓保修失效、变砖风险和恢复方法",
+    )
 
     subparsers.add_parser("install-hotfix", parents=[common], help="把 Hotfix 写到 Kindle 根目录")
 
@@ -3050,7 +3140,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
 def main(argv: Sequence[str] | None = None) -> None:
+    _force_utf8_stdio()
     if sys.version_info < (3, 9):
         sys.stderr.write("需要 Python 3.9 或更高版本。\n")
         raise SystemExit(1)
