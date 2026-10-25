@@ -1,4 +1,6 @@
-# kindle-weread-skill
+# kindle-weread-skill：用 AI Agent 在 Kindle 上看微信读书
+
+Kindle 本身不能装微信读书 App。这个 Skill 让 Claude Code、Codex 或 Cursor 帮你越狱 Kindle，装上 KOReader 和社区微信读书插件（weread.koplugin）。
 
 把这句话发给你的 Agent：
 
@@ -118,6 +120,8 @@ python scripts/kindle_helper.py install-plugin --choice both --json
 
 已验证的只有这一台：Paperwhite 第 7 代 KP3，序列号前缀 `G090`，固件 `5.16.2.1.1`。表里其余行都是未验证。
 
+v0.1 只在一台真实的 Kindle Paperwhite 3（KP3）上验证过。其他型号和固件尚未测试，可能需要另一条越狱路线。请开一个 issue 反馈结果。
+
 ## 怎样算安装完成
 
 下面三件事都发生，才算安装完成：
@@ -162,6 +166,44 @@ AdBreak 会先把原来的 `system/.assets` 备份到本机缓存。需要还原
 python scripts/kindle_helper.py restore-assets --json
 ```
 
+## 常见问题
+
+### Kindle 能看微信读书吗？
+
+Kindle 没有官方微信读书 App。上游 [weread.koplugin](https://github.com/finlater/weread.koplugin) 在 KOReader 里读微信读书的书，这个 Skill 把越狱、KOReader 和这个插件装到你自己的 Kindle 上。
+
+### 一定要越狱吗？
+
+在 Kindle 上安装 KOReader 的前提是设备已经越狱，这个 Skill 就按固件走 WinterBreak 或 AdBreak。本仓库只处理 Kindle。
+
+### 越狱会删书、影响保修吗？
+
+越狱会失去亚马逊保修；变砖时怎么恢复见「开始前」和「失败时如何恢复」。LanguageBreak 会清空设备，只有明确要求才使用，默认方案是 WinterBreak，固件 `5.18.1` 及以上改为 AdBreak。
+
+### weread.koplugin 和觅阅 MiuRead 选哪个？
+
+默认是 [weread.koplugin](https://github.com/finlater/weread.koplugin) v1.6.0：上游说明里可以搜书、看书架和书评，没有独立书城。要微信读书书城、排行榜和分类时用觅阅 [miuread](https://github.com/miumiupy98-art/miuread-koreader) v6.0.0，书架管理要再授权一次；两条可以一起装。
+
+### KOReader 版本有什么要求？
+
+上游 weread.koplugin 建议 KOReader 2026.03 或更高，更旧的版本可能在「工具」里找不到「微信读书」。本仓库钉的是 v2026.07.1，乔木 SimpleUI 同样要求 2026.03 或更新。
+
+### 我的型号和固件能不能用？
+
+已验证的只有 Kindle Paperwhite 第 7 代（KP3），序列号前缀 `G090`，固件 `5.16.2.1.1`；其他型号见「兼容范围」，标为未验证。固件低于 `5.16.3` 用 `kindlepw2` 和 coplate KUAL，大于等于 `5.16.3` 用 `kindlehf` 和硬浮点 KUAL；低于 `5.18.1` 默认 WinterBreak，大于等于 `5.18.1` 用 AdBreak。
+
+### 亚马逊系统更新后越狱失效怎么办？
+
+亚马逊系统更新一旦装上，越狱会失效。改装时怎么拦住更新，以及装完后不要点「更新您的 Kindle」，见「官方系统更新」。
+
+### 微信读书 API Key 在哪里拿？
+
+在手机微信读书打开「我 → 设置 → 微信读书 Skill」，点「获取 API Key」。Kindle 上第一次打开会先说明这件事，再显示微信二维码。
+
 ## 许可
 
 本仓库的脚本和文档以 MIT 许可证发布。KOReader、越狱包和插件各自使用上游许可证；本工具只在运行时从它们的公开 Release 下载。乔木 SimpleUI 是 GPL-3.0，同样只在安装时下载，不包含在本仓库里。
+
+## In English
+
+This skill walks Claude Code, Codex, or Cursor through jailbreaking your own Kindle, then installing KUAL, KOReader, the community WeRead plugin (weread.koplugin), and Qiaomu SimpleUI as the home screen. v0.1 has only been verified on a real Kindle Paperwhite 3 (KP3), serial prefix G090, firmware 5.16.2.1.1. Other models and firmware are untested and may need a different jailbreak route; please open an issue to report results. Jailbreaking voids the Amazon warranty and can leave the device unable to boot; read 「开始前」 before continuing. The first KOReader launch opens SimpleUI and shows a WeChat login QR code.
